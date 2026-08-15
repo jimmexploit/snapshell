@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"snapshell/internal/daemon"
 )
 
 // fakeTmux emulates `tmux display-message -p -t <pane> '#{history_size}
@@ -135,5 +137,32 @@ func TestSnippetsMentionShell(t *testing.T) {
 	}
 	if !strings.Contains(ZshSnippet, "internal-popup-inline") {
 		t.Fatal("zsh snippet must run the inline caption form at the prompt")
+	}
+	if !strings.Contains(BashSnippet, "record-command") || !strings.Contains(ZshSnippet, "record-command") {
+		t.Fatal("snippets must record the command text for the plain-shell fallback")
+	}
+}
+
+func TestRecordCommand(t *testing.T) {
+	setUp(t, "0 5") // redirects markers dir; lastcommand lives in state dir
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := RecordCommand("uname -r"); err != nil {
+		t.Fatalf("RecordCommand: %v", err)
+	}
+	data, err := os.ReadFile(daemon.LastCommandPath())
+	if err != nil {
+		t.Fatalf("read lastcommand: %v", err)
+	}
+	if string(data) != "uname -r\n" {
+		t.Fatalf("lastcommand = %q, want %q", data, "uname -r\n")
+	}
+	// A later command replaces the earlier one.
+	if err := RecordCommand("whoami"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(daemon.LastCommandPath())
+	if string(data) != "whoami\n" {
+		t.Fatalf("lastcommand = %q, want %q", data, "whoami\n")
 	}
 }

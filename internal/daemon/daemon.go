@@ -502,29 +502,56 @@ func (d *Daemon) captureScreenshot(s *Session) {
 		blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath})
 }
 
-// captureCode runs the Alt+2 flow: focused tmux pane → last command's text
-// → popup caption → entry appended to blog.md.
+// captureCode runs the Alt+2 flow: the last command's text (focused tmux
+// pane when in tmux, otherwise the shell hook's recorded command) → popup
+// caption → entry appended to blog.md.
 func (d *Daemon) captureCode(s *Session) {
 	res, err := tmuxcap.Capture(d.markersDir, d.cfg.OutputIncluded())
 	if err != nil {
-		d.logger.Printf("capture tmux: %v", err)
-		_ = notify.Send("snapshell", err.Error())
+		// Outside tmux there are no row markers; fall back to the command
+		// text the shell hook recorded. Full output needs tmux — the
+		// notification says so instead of staying silent.
+		text, rerr := readLastCommand()
+		if rerr != nil || strings.TrimSpace(text) == "" {
+			d.logger.Printf("capture tmux: %v", err)
+			_ = notify.Send("snapshell", err.Error())
+			return
+		}
+		d.logger.Printf("capture tmux: %v — falling back to recorded last command", err)
+		_ = notify.Send("snapshell", "not in tmux — capturing last command only (no output)")
+		d.appendCodeEntry(s, text, "lastcommand")
 		return
 	}
-	if strings.TrimSpace(res.Text) == "" {
-		d.logger.Printf("capture tmux: empty capture, no entry added")
+	d.appendCodeEntry(s, res.Text, "tmux")
+}
+
+// appendCodeEntry is the shared tail of both code-capture paths: stage the
+// text for a caption, then append it to blog.md.
+func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
+	if strings.TrimSpace(text) == "" {
+		d.logger.Printf("capture %s: empty capture, no entry added", source)
 		return
 	}
 
-	tmp, err := popup.TempCodeFile(res.Text)
+	tmp, err := popup.TempCodeFile(text)
 	if err != nil {
-		d.logger.Printf("capture tmux: write temp file: %v", err)
+		d.logger.Printf("capture %s: write temp file: %v", source, err)
 		_ = notify.Send("snapshell", "failed to stage captured command: "+err.Error())
 		return
 	}
 
 	d.appendWithPopup(s, popup.ModeCode, tmp,
-		blog.Entry{Kind: blog.KindCode, CodeText: res.Text})
+		blog.Entry{Kind: blog.KindCode, CodeText: text})
+}
+
+// readLastCommand returns the most recent command text recorded by the
+// shell hook (plain-shell Alt+2 fallback).
+func readLastCommand() (string, error) {
+	data, err := os.ReadFile(LastCommandPath())
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\n"), nil
 }
 
 // captureNote runs the Alt+3 flow: stage the note for inline captioning

@@ -39,6 +39,7 @@ func newShellhookCmd() *cobra.Command {
 			},
 		},
 		newMarkCmd(),
+		newRecordCommandCmd(),
 	)
 
 	return cmd
@@ -70,6 +71,25 @@ func newMarkCmd() *cobra.Command {
 	cmd.Flags().StringVar(&prevEnd, "prev-end", "", "end row of the previous command (the row the current prompt started on); empty when unknown")
 	_ = cmd.MarkFlagRequired("pane")
 	_ = cmd.MarkFlagRequired("phase")
+
+	return cmd
+}
+
+func newRecordCommandCmd() *cobra.Command {
+	var text string
+
+	cmd := &cobra.Command{
+		Use:   "record-command",
+		Short: "Record the last command's text for the plain-shell Alt+2 fallback (called by the shell hook)",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			// Silent on failure: this runs on every command and must not
+			// spam the terminal.
+			_ = shellhook.RecordCommand(text)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&text, "text", "", "the executed command's text")
 
 	return cmd
 }

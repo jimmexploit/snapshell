@@ -73,6 +73,17 @@ func Mark(pane, phase, prevEnd string) (int, error) {
 	}
 }
 
+// RecordCommand stores the most recent command's text for the plain-shell
+// Alt+2 fallback (outside tmux there are no row markers, so the daemon
+// captures the command from here instead). The marker file it overwrites
+// on every command.
+func RecordCommand(text string) error {
+	if err := os.MkdirAll(filepath.Dir(daemon.LastCommandPath()), 0o700); err != nil {
+		return err
+	}
+	return writeAtomic(daemon.LastCommandPath(), text+"\n")
+}
+
 // tmuxCursorAbs returns the pane's absolute cursor row = history_size +
 // cursor_y.
 func tmuxCursorAbs(pane string) (int, error) {

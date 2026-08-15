@@ -46,9 +46,10 @@ independently; a checkmark means done and verified.
       extra window, no taskbar entry. The spawned-window path remains as
       the `[popup] inline = false` fallback (default is `true`).
 
-- [ ] **7. Plain-shell (no tmux) support** — Alt+2 currently no-ops
-      without tmux. For users who don't use tmux: fall back to capturing
-      the last command's text via shell history (the shell hook already
-      knows the command). Full scrolled-output capture still requires
-      tmux; a notification explains the difference instead of a dead
-      silence.
+- [x] **7. Plain-shell (no tmux) support** — the shell hook now works with
+      or without tmux. Outside tmux it records the last command's text
+      (`snapshell shellhook record-command`) instead of row markers, and
+      Alt+2 falls back to that text when tmux capture isn't available. The
+      inline caption form runs at every prompt in both cases. A
+      notification explains that full output capture needs tmux instead of
+      staying silent.

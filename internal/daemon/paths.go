@@ -27,3 +27,8 @@ func MarkersDir() string { return filepath.Join(StateDir(), "markers") }
 // daemon writes so the shell hook can pick it up at the next prompt and
 // run the caption form inline.
 func PendingPath() string { return filepath.Join(StateDir(), "pending.json") }
+
+// LastCommandPath returns the path where the shell hook records the most
+// recent command's text. Outside tmux (no row markers possible) Alt+2
+// falls back to this.
+func LastCommandPath() string { return filepath.Join(StateDir(), "lastcommand") }
