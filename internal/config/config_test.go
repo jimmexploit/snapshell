@@ -137,6 +137,46 @@ func TestResolvePopupTerminalNone(t *testing.T) {
 	}
 }
 
+func TestResolvePopupTerminalPicksFirstAvailableFallback(t *testing.T) {
+	bin := t.TempDir()
+	// alacritty and kitty absent; mate-terminal present → mate-terminal.
+	if err := os.WriteFile(filepath.Join(bin, "mate-terminal"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	got, err := Default().ResolvePopupTerminal()
+	if err != nil {
+		t.Fatalf("ResolvePopupTerminal: %v", err)
+	}
+	if got != "mate-terminal" {
+		t.Fatalf("got %q, want mate-terminal fallback", got)
+	}
+}
+
+func TestDefaultFileRoundTripsAndDocuments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The on-disk file should document how to set [popup].terminal.
+	for _, want := range []string{"mate-terminal", "include_output", "session_root"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("default file should document %q:\n%s", want, data)
+		}
+	}
+	// Round-trip: re-reading the written file must reproduce the defaults.
+	if got, err := LoadFrom(path); err != nil {
+		t.Fatalf("reload: %v", err)
+	} else if got.Popup.Terminal != cfg.Popup.Terminal || !got.OutputIncluded() {
+		t.Fatalf("reloaded config drifted: %+v", got)
+	}
+}
+
 func TestLoadBadToml(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("[[[not valid"), 0o600); err != nil {

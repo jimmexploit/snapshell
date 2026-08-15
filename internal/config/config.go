@@ -69,6 +69,14 @@ func (c *Config) OutputIncluded() bool {
 	return c.Capture.IncludeOutput != nil && *c.Capture.IncludeOutput
 }
 
+// TerminalFallbacks lists popup terminal emulators tried in order when the
+// configured [popup].terminal is not on PATH. Keep this in sync with the
+// per-emulator flags in internal/popup/spawn.go.
+var TerminalFallbacks = []string{
+	"alacritty", "kitty", "mate-terminal", "gnome-terminal",
+	"xfce4-terminal", "konsole", "terminator", "lxterminal", "urxvt", "xterm",
+}
+
 // ConfigPath returns the default config file location.
 func ConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -119,8 +127,10 @@ func expandCfg(c *Config) {
 	c.Paths.SessionRoot = expandPath(c.Paths.SessionRoot)
 }
 
-// writeDefault creates the config directory and writes the full default
-// file so the user has something to look at and edit.
+// writeDefault creates the config directory and writes a documented default
+// file so the user has something to look at and edit. Written as a template
+// (not toml.NewEncoder) so each key can carry a comment; values must stay
+// in sync with Default().
 func writeDefault(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %v", err)
@@ -130,11 +140,36 @@ func writeDefault(path string) error {
 		return fmt.Errorf("create config %s: %v", path, err)
 	}
 	defer f.Close()
-	if err := toml.NewEncoder(f).Encode(Default()); err != nil {
+	if _, err := f.WriteString(defaultFileText); err != nil {
 		return fmt.Errorf("write config %s: %v", path, err)
 	}
 	return nil
 }
+
+// defaultFileText is the commented-on-disk form of Default().
+const defaultFileText = `# snapshell configuration
+# paths below are relative to your home unless absolute
+
+[screenshot]
+  tool = "flameshot"        # "flameshot" or "mate-screenshot"
+
+[popup]
+  # Terminal for the floating caption window. One of: alacritty, kitty,
+  # mate-terminal, gnome-terminal, xfce4-terminal, konsole, terminator,
+  # lxterminal, urxvt, xterm. If the one you set is missing, snapshell
+  # falls back through that list.
+  terminal = "alacritty"
+  width_cells = 100
+  height_cells = 30
+
+[capture]
+  # false = Alt+2 captures only the command line (and its prompt lines),
+  # skipping the command's output.
+  include_output = true
+
+[paths]
+  session_root = "~/snapshell"
+`
 
 // fillDefaults replaces empty/zero values with the built-in defaults.
 func fillDefaults(c *Config) {
@@ -200,7 +235,7 @@ func (c *Config) ResolveScreenshotTool() (string, error) {
 }
 
 // ResolvePopupTerminal finds a usable terminal emulator for the popup.
-// Order: configured terminal, then alacritty → kitty → xterm. Returns a
+// Order: configured terminal, then the TerminalFallbacks list. Returns a
 // specific error naming every option tried when none is available.
 func (c *Config) ResolvePopupTerminal() (string, error) {
 	candidates := []string{}
@@ -216,7 +251,7 @@ func (c *Config) ResolvePopupTerminal() (string, error) {
 		}
 	}
 	add(c.Popup.Terminal)
-	for _, name := range []string{"alacritty", "kitty", "xterm"} {
+	for _, name := range TerminalFallbacks {
 		add(name)
 	}
 	for _, name := range candidates {

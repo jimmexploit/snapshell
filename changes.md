@@ -28,11 +28,15 @@ independently; a checkmark means done and verified.
       - `include_output = false`: only the prompt + command line(s), no
         output noise.
 
-- [ ] **5. Wider popup terminal support** — the popup terminal resolution
-      only knows alacritty/kitty/xterm. The user may run mate-terminal,
-      gnome-terminal, xfce4-terminal, konsole, etc. Extend the fallback
-      list and the per-emulator size flags; document how to set
-      `[popup].terminal`.
+- [x] **5. Wider popup terminal support** — popup terminal fallback now
+      covers the common desktops: alacritty, kitty, mate-terminal,
+      gnome-terminal, xfce4-terminal, konsole, terminator, lxterminal,
+      urxvt, xterm. Per-emulator window flags added for the new ones
+      (`--geometry=` for mate/gnome/xfce4, konsole `--geometry`), and the
+      exec form is handled per emulator too (mate-terminal needs a single
+      shell-quoted command string; gnome-terminal needs `--disable-factory
+      --`; xfce4-terminal `-x`; konsole `--separate`). The generated
+      `config.toml` now documents how to set `[popup].terminal`.
 
 - [ ] **6. fzf-like inline popup (no new window / no taskbar entry)** — the
       current popup spawns a brand-new terminal window (heavyweight,

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"snapshell/internal/config"
 )
 
 // defaultTerminal is the preferred popup terminal when none is supplied by
@@ -34,15 +36,13 @@ func Spawn(selfBin, mode, file, sessionDir, term string, widthCells, heightCells
 		term = resolved
 	}
 
+	cmdArgv := []string{selfBin, "internal-popup",
+		"--mode", mode, "--file", file, "--session-dir", sessionDir}
+
 	args := []string{}
-	if term == "alacritty" || term == "kitty" {
-		args = append(args, "--class", "snapshell-popup", "--title", "snapshell")
-	} else if term == "xterm" {
-		args = append(args, "-name", "snapshell-popup", "-T", "snapshell")
-	}
+	args = append(args, classFlags(term)...)
 	args = append(args, dimensionsFlags(term, widthCells, heightCells)...)
-	args = append(args, "-e", selfBin, "internal-popup",
-		"--mode", mode, "--file", file, "--session-dir", sessionDir)
+	args = append(args, commandArgs(term, cmdArgv)...)
 
 	cmd := exec.Command(term, args...)
 	if err := cmd.Start(); err != nil {
@@ -58,9 +58,33 @@ func Spawn(selfBin, mode, file, sessionDir, term string, widthCells, heightCells
 	return nil
 }
 
+// classFlags returns flags that give the popup its own WM_CLASS and title,
+// so it reads as a distinct window and positionPopup can find it. Only
+// emulators with a known option get one; the rest rely on the emulator's
+// own class (positioning is best-effort anyway).
+func classFlags(term string) []string {
+	switch term {
+	case "alacritty", "kitty":
+		return []string{"--class", "snapshell-popup", "--title", "snapshell"}
+	case "xterm":
+		return []string{"-name", "snapshell-popup", "-T", "snapshell"}
+	case "mate-terminal", "gnome-terminal":
+		// GTK-style options take --option=value.
+		return []string{"--class=snapshell-popup", "--title=snapshell"}
+	case "xfce4-terminal":
+		return []string{"--title", "snapshell"}
+	case "konsole":
+		// --separate forces a fresh instance; without it konsole re-uses an
+		// existing window and may ignore the command.
+		return []string{"--separate", "--title", "snapshell"}
+	}
+	return nil
+}
+
 // dimensionsFlags returns the per-emulator flags that set the window's
 // size in cell columns×lines. Exact flag names vary by emulator, so this
-// is popup's concern, not config's.
+// is popup's concern, not config's. Keep in sync with
+// config.TerminalFallbacks.
 func dimensionsFlags(term string, cols, lines int) []string {
 	if cols <= 0 || lines <= 0 {
 		return nil
@@ -75,13 +99,52 @@ func dimensionsFlags(term string, cols, lines int) []string {
 		}
 	case "xterm":
 		return []string{"-geometry", fmt.Sprintf("%dx%d", cols, lines)}
+	case "mate-terminal", "gnome-terminal", "xfce4-terminal":
+		return []string{"--geometry=" + fmt.Sprintf("%dx%d", cols, lines)}
+	case "konsole":
+		return []string{"--geometry", fmt.Sprintf("%dx%d", cols, lines)}
 	}
 	return nil
 }
 
+// commandArgs returns the emulator's exec flag plus the internal-popup
+// argv. Most emulators take each argument separately after a "-e"/"-x"/"--"
+// flag; mate-terminal's "-e" accepts only a single command string, which
+// must be shell-quoted so it survives the shell it's passed through.
+func commandArgs(term string, argv []string) []string {
+	switch term {
+	case "mate-terminal":
+		return append([]string{"-e"}, shellQuoteArgs(argv))
+	case "gnome-terminal":
+		// --disable-factory: the exec flag (--, args passed directly) is
+		// swallowed when gnome-terminal re-uses its existing process.
+		return append([]string{"--disable-factory", "--"}, argv...)
+	case "xfce4-terminal":
+		// -x passes each argument through directly, no shell involved.
+		return append([]string{"-x"}, argv...)
+	default:
+		return append([]string{"-e"}, argv...)
+	}
+}
+
+// shellQuoteArgs joins argv into a single shell-quoted command string for
+// emulators that run their command through a shell.
+func shellQuoteArgs(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
+}
+
 // resolveTerminal picks a terminal emulator that is actually installed.
 func resolveTerminal(configured string) (string, error) {
-	for _, name := range []string{configured, "alacritty", "kitty", "xterm"} {
+	cands := []string{}
+	if configured != "" {
+		cands = append(cands, configured)
+	}
+	cands = append(cands, config.TerminalFallbacks...)
+	for _, name := range cands {
 		if name == "" {
 			continue
 		}
@@ -89,7 +152,7 @@ func resolveTerminal(configured string) (string, error) {
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("no popup terminal found on PATH (tried alacritty, kitty, xterm) — install one")
+	return "", fmt.Errorf("no popup terminal found on PATH (tried %s) — install one", strings.Join(cands, ", "))
 }
 
 // positionPopup finds the spawned window by WM_CLASS and moves/resizes it

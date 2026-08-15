@@ -104,3 +104,67 @@ func TestSpawnNoTerminal(t *testing.T) {
 		t.Fatal("no terminal should error")
 	}
 }
+
+func TestCommandArgsByTerminal(t *testing.T) {
+	argv := []string{"/home/u/bin/snapshell", "internal-popup",
+		"--mode", "code", "--file", "/tmp/a b.txt", "--session-dir", "/sessions/my box"}
+
+	alac := commandArgs("alacritty", argv)
+	wantAlac := []string{"-e", "/home/u/bin/snapshell", "internal-popup",
+		"--mode", "code", "--file", "/tmp/a b.txt", "--session-dir", "/sessions/my box"}
+	if strings.Join(alac, "\x00") != strings.Join(wantAlac, "\x00") {
+		t.Fatalf("alacritty args = %q, want %q", alac, wantAlac)
+	}
+
+	mt := commandArgs("mate-terminal", argv)
+	wantMT := []string{"-e", "'/home/u/bin/snapshell' 'internal-popup' '--mode' 'code' '--file' '/tmp/a b.txt' '--session-dir' '/sessions/my box'"}
+	if strings.Join(mt, "\x00") != strings.Join(wantMT, "\x00") {
+		t.Fatalf("mate-terminal args = %q, want %q", mt, wantMT)
+	}
+
+	gnome := commandArgs("gnome-terminal", argv)
+	wantGnome := []string{"--disable-factory", "--", "/home/u/bin/snapshell", "internal-popup",
+		"--mode", "code", "--file", "/tmp/a b.txt", "--session-dir", "/sessions/my box"}
+	if strings.Join(gnome, "\x00") != strings.Join(wantGnome, "\x00") {
+		t.Fatalf("gnome-terminal args = %q, want %q", gnome, wantGnome)
+	}
+
+	xfce := commandArgs("xfce4-terminal", argv)
+	if xfce[0] != "-x" || xfce[1] != "/home/u/bin/snapshell" {
+		t.Fatalf("xfce4-terminal should pass argv directly after -x, got %q", xfce)
+	}
+
+	konsole := commandArgs("konsole", argv)
+	if konsole[0] != "-e" || konsole[1] != "/home/u/bin/snapshell" {
+		t.Fatalf("konsole should pass argv directly after -e, got %q", konsole)
+	}
+}
+
+func TestClassAndDimensionFlags(t *testing.T) {
+	if got := classFlags("mate-terminal"); !strings.Contains(strings.Join(got, " "), "--class=snapshell-popup") {
+		t.Fatalf("mate-terminal class flags = %q, want --class=snapshell-popup", got)
+	}
+	if got := dimensionsFlags("mate-terminal", 100, 30); len(got) != 1 || got[0] != "--geometry=100x30" {
+		t.Fatalf("mate-terminal dims = %q, want --geometry=100x30", got)
+	}
+	if got := dimensionsFlags("konsole", 100, 30); len(got) != 2 || got[1] != "100x30" {
+		t.Fatalf("konsole dims = %q, want --geometry 100x30", got)
+	}
+	if got := dimensionsFlags("gnome-terminal", 80, 24); len(got) != 1 || got[0] != "--geometry=80x24" {
+		t.Fatalf("gnome-terminal dims = %q, want --geometry=80x24", got)
+	}
+	if got := dimensionsFlags("xfce4-terminal", 80, 24); len(got) != 1 || got[0] != "--geometry=80x24" {
+		t.Fatalf("xfce4-terminal dims = %q, want --geometry=80x24", got)
+	}
+	if got := classFlags("konsole"); len(got) == 0 || got[0] != "--separate" {
+		t.Fatalf("konsole class flags = %q, want --separate first", got)
+	}
+}
+
+func TestShellQuoteArgsEscapesSingleQuote(t *testing.T) {
+	got := shellQuoteArgs([]string{"a'b", "plain"})
+	want := "'a'\\''b' 'plain'"
+	if got != want {
+		t.Fatalf("shellQuoteArgs = %q, want %q", got, want)
+	}
+}
