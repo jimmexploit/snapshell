@@ -28,28 +28,35 @@ independently; a checkmark means done and verified.
       - `include_output = false`: only the prompt + command line(s), no
         output noise.
 
-- [x] **5. Wider popup terminal support** — popup terminal fallback now
-      covers the common desktops: alacritty, kitty, mate-terminal,
-      gnome-terminal, xfce4-terminal, konsole, terminator, lxterminal,
-      urxvt, xterm. Per-emulator window flags added for the new ones
-      (`--geometry=` for mate/gnome/xfce4, konsole `--geometry`), and the
-      exec form is handled per emulator too (mate-terminal needs a single
-      shell-quoted command string; gnome-terminal needs `--disable-factory
-      --`; xfce4-terminal `-x`; konsole `--separate`). The generated
-      `config.toml` now documents how to set `[popup].terminal`.
+- [x] **5. Wider popup terminal support** — SUPERSEDED by item 8. The
+      terminal-emulator popup (alacritty/kitty/mate-terminal/... fallback
+      with per-emulator window/exec flags) existed while the caption form
+      ran in a spawned floating terminal. The zenity window form replaced
+      the spawned terminal entirely, so the emulator fallback list and the
+      `[popup].terminal`/`width_cells`/`height_cells` config keys were
+      removed.
 
 - [x] **6. fzf-like inline popup (no new window / no taskbar entry)** —
-      captions now run inline at the user's next shell prompt: the daemon
-      stages a pending capture (`~/.local/state/snapshell/pending.json`)
-      and the shell hook runs `snapshell internal-popup-inline` at each
-      prompt, which shows the form in-place and appends the entry. No
-      extra window, no taskbar entry. The spawned-window path remains as
-      the `[popup] inline = false` fallback (default is `true`).
+      REVERTED. The inline caption form (pending-capture file +
+      `internal-popup-inline` run by the shell hook at each prompt) proved
+      too fragile for this phase and is gone. The caption prompt is a real
+      zenity window again (see item 8).
 
 - [x] **7. Plain-shell (no tmux) support** — the shell hook now works with
       or without tmux. Outside tmux it records the last command's text
       (`snapshell shellhook record-command`) instead of row markers, and
-      Alt+2 falls back to that text when tmux capture isn't available. The
-      inline caption form runs at every prompt in both cases. A
+      Alt+2 falls back to that text when tmux capture isn't available. A
       notification explains that full output capture needs tmux instead of
       staying silent.
+
+- [x] **8. zenity window form popup (TUI removed)** — the caption/note
+      prompt is a real GTK window via `zenity`: `--forms` for image/code
+      (caption entry; image mode shows the file's path + pixel dimensions,
+      code mode shows a truncated preview of the captured text) and
+      `--text-info --editable` for notes. Save appends with the caption,
+      Skip/cancel appends image/code without one and discards notes. The
+      dialog is spawned by the daemon inside its per-capture goroutine, so
+      a slow/ignored window never blocks the next hotkey. No TUI anywhere:
+      `huh`/`bubbles`/`lipgloss` deps, the spawned terminal, the pending
+      file, and `internal-popup`/`internal-popup-inline` are all deleted.
+      `[popup]` config is now `width`/`height` (px).

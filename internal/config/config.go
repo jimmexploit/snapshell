@@ -38,16 +38,11 @@ type CaptureConfig struct {
 	IncludeOutput *bool `toml:"include_output"`
 }
 
-// PopupConfig configures the caption prompt.
+// PopupConfig configures the zenity caption/note window.
 type PopupConfig struct {
-	Terminal    string `toml:"terminal"`
-	WidthCells  int    `toml:"width_cells"`
-	HeightCells int    `toml:"height_cells"`
-	// Inline runs the caption form inline at the user's next shell prompt
-	// (fzf-style, via the shell hook) instead of spawning a floating
-	// terminal window. A *bool so an explicit `inline = false` in the file
-	// is preserved. The spawned-window path remains as the fallback.
-	Inline *bool `toml:"inline"`
+	// Width/Height size the caption window in pixels (0 = let zenity pick).
+	Width  int `toml:"width"`
+	Height int `toml:"height"`
 }
 
 // PathsConfig configures where session folders live.
@@ -60,11 +55,10 @@ type PathsConfig struct {
 // file-based configs).
 func Default() *Config {
 	includeOutput := true
-	inline := true
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
 		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
-		Popup:      PopupConfig{Terminal: "alacritty", WidthCells: 100, HeightCells: 30, Inline: &inline},
+		Popup:      PopupConfig{Width: 560, Height: 320},
 		Paths:      PathsConfig{SessionRoot: "~/snapshell"},
 	}
 }
@@ -73,20 +67,6 @@ func Default() *Config {
 // output (default true).
 func (c *Config) OutputIncluded() bool {
 	return c.Capture.IncludeOutput != nil && *c.Capture.IncludeOutput
-}
-
-// PopupInline reports whether captions should be collected inline at the
-// next shell prompt (default true) rather than in a floating window.
-func (c *Config) PopupInline() bool {
-	return c.Popup.Inline != nil && *c.Popup.Inline
-}
-
-// TerminalFallbacks lists popup terminal emulators tried in order when the
-// configured [popup].terminal is not on PATH. Keep this in sync with the
-// per-emulator flags in internal/popup/spawn.go.
-var TerminalFallbacks = []string{
-	"alacritty", "kitty", "mate-terminal", "gnome-terminal",
-	"xfce4-terminal", "konsole", "terminator", "lxterminal", "urxvt", "xterm",
 }
 
 // ConfigPath returns the default config file location.
@@ -166,17 +146,9 @@ const defaultFileText = `# snapshell configuration
   tool = "flameshot"        # "flameshot" or "mate-screenshot"
 
 [popup]
-  # Terminal for the floating caption window. One of: alacritty, kitty,
-  # mate-terminal, gnome-terminal, xfce4-terminal, konsole, terminator,
-  # lxterminal, urxvt, xterm. If the one you set is missing, snapshell
-  # falls back through that list.
-  terminal = "alacritty"
-  width_cells = 100
-  height_cells = 30
-  # true = the caption form appears inline at your next shell prompt
-  # (fzf-style, no extra window). false = spawn a floating terminal window
-  # instead.
-  inline = true
+  # Size of the caption window in pixels. 0 = let zenity pick.
+  width = 560
+  height = 320
 
 [capture]
   # false = Alt+2 captures only the command line (and its prompt lines),
@@ -196,17 +168,11 @@ func fillDefaults(c *Config) {
 	if c.Capture.IncludeOutput == nil {
 		c.Capture.IncludeOutput = def.Capture.IncludeOutput
 	}
-	if strings.TrimSpace(c.Popup.Terminal) == "" {
-		c.Popup.Terminal = def.Popup.Terminal
+	if c.Popup.Width <= 0 {
+		c.Popup.Width = def.Popup.Width
 	}
-	if c.Popup.WidthCells <= 0 {
-		c.Popup.WidthCells = def.Popup.WidthCells
-	}
-	if c.Popup.HeightCells <= 0 {
-		c.Popup.HeightCells = def.Popup.HeightCells
-	}
-	if c.Popup.Inline == nil {
-		c.Popup.Inline = def.Popup.Inline
+	if c.Popup.Height <= 0 {
+		c.Popup.Height = def.Popup.Height
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot
@@ -251,32 +217,4 @@ func (c *Config) ResolveScreenshotTool() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("cannot capture screenshot: none of %s found on PATH — install one", strings.Join(candidates, ", "))
-}
-
-// ResolvePopupTerminal finds a usable terminal emulator for the popup.
-// Order: configured terminal, then the TerminalFallbacks list. Returns a
-// specific error naming every option tried when none is available.
-func (c *Config) ResolvePopupTerminal() (string, error) {
-	candidates := []string{}
-	add := func(s string) {
-		s = strings.TrimSpace(s)
-		for _, have := range candidates {
-			if have == s {
-				return
-			}
-		}
-		if s != "" {
-			candidates = append(candidates, s)
-		}
-	}
-	add(c.Popup.Terminal)
-	for _, name := range TerminalFallbacks {
-		add(name)
-	}
-	for _, name := range candidates {
-		if _, err := exec.LookPath(name); err == nil {
-			return name, nil
-		}
-	}
-	return "", fmt.Errorf("no popup terminal found on PATH — none of %s available; install one", strings.Join(candidates, ", "))
 }

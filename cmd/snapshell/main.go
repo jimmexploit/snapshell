@@ -31,8 +31,6 @@ func newRootCmd() *cobra.Command {
 		newStartCmd(),
 		newStopCmd(),
 		newStatusCmd(),
-		newInternalPopupCmd(),
-		newInternalPopupInlineCmd(),
 		newShellhookCmd(),
 	)
 

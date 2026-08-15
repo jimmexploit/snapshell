@@ -19,7 +19,7 @@ snapshell/
 ├── internal/capture/screenshot/AGENTS.md  ← screenshot tool invocation
 ├── internal/capture/tmuxcap/AGENTS.md ← tmux pane capture by row range
 ├── internal/shellhook/AGENTS.md       ← bash/zsh hook scripts + marker files
-├── internal/popup/AGENTS.md           ← huh-based floating capture UI
+├── internal/popup/AGENTS.md           ← zenity caption/note window (no TUI)
 ├── internal/blog/AGENTS.md            ← blog.md writer, formatting contract
 ├── internal/config/AGENTS.md          ← TOML config schema + defaults
 └── systemd/                           ← user service unit (see daemon AGENTS.md)

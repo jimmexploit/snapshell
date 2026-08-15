@@ -18,10 +18,10 @@ snapshell stop               end the active session
 snapshell status             print active session name + item count, or
                             "no active session"
 
-snapshell internal-popup --mode image|code|note --file <path>
-                            NOT user-facing — invoked by the daemon itself
-                            inside a spawned floating terminal. See
-                            internal/popup/AGENTS.md for its contract.
+snapshell shellhook print|install bash|zsh
+                            manage the shell integration (plus hidden
+                            helpers mark / record-command that the hooks
+                            call — see internal/shellhook/AGENTS.md)
 ```
 
 Use a real CLI library (`github.com/spf13/cobra` is fine) so `--help`
@@ -53,7 +53,7 @@ description visible in `--help`.
 
 ## What NOT to put here
 
-- No direct calls to `flameshot`, `tmux`, `xdotool`, X11 libraries, or huh
-  forms. Those live in `internal/capture/*`, `internal/hotkeys`, and
+- No direct calls to `flameshot`, `tmux`, `xdotool`, X11 libraries, or
+  zenity. Those live in `internal/capture/*`, `internal/hotkeys`, and
   `internal/popup` respectively. This package's only job is: parse args →
   build an IPC request → send it → print the response.

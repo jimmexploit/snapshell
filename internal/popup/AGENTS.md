@@ -1,80 +1,87 @@
 # AGENTS.md — internal/popup
 
 Owns: the floating window that appears after a screenshot or command
-capture (and for raw notes) to collect an optional caption, using
-`github.com/charmbracelet/huh`. This is the shared tail-end referenced by
-`internal/capture/screenshot`, `internal/capture/tmuxcap`, and the Alt+3
-raw-note flow.
+capture (and for raw notes) to collect an optional caption. It is a real
+**GUI window** (a zenity GTK form dialog) — there is no TUI anywhere in
+this mode. This is the shared tail-end referenced by the Alt+1 screenshot
+flow, the Alt+2 code flow, and the Alt+3 raw-note flow.
 
-## Two halves: spawning the window, and the TUI inside it
+## Design: one zenity dialog per mode, spawned by the daemon
 
-Because Alt+1/2/3 are global hotkeys, the popup can't draw into whatever
-window currently has focus — it needs its own floating terminal window.
-Split this cleanly into two concerns:
+`popup.Capture(mode, sessionDir, file, text string, width, height int)` is
+the single entry point. It blocks until the dialog closes: it launches
+zenity, reads the caption/note text from its stdout, then appends the
+finished entry to `<sessionDir>/blog.md` via `internal/blog`. It must be
+run in its own goroutine by the daemon — a slow or ignored dialog must
+never block the daemon or the next hotkey press.
 
-1. **Spawning** (done by the daemon, in this package or a small
-   `internal/popup/spawn.go`): launch a terminal emulator running
-   `snapshell internal-popup --mode <image|code|note> --file <path>`,
-   e.g.:
-   ```
-   alacritty --class snapshell-popup -e snapshell internal-popup --mode image --file attachments/003.png
-   ```
-   Then use `xdotool search --class snapshell-popup` (poll briefly, the
-   window may not exist the instant the process is spawned) followed by
-   `xdotool windowmove`/`windowsize` and `windowactivate` (or `wmctrl`
-   equivalents) to center it at the configured size
-   (`[popup].width_cells`/`height_cells` from config) and give it focus.
-   - Terminal emulator is configurable (`[popup].terminal`), default
-     `alacritty`. If not found on `$PATH`, fall back through a short list
-     (`kitty`, `xterm` as last resort) and log which one was used.
-2. **The TUI itself** (`cmd/snapshell`'s `internal-popup` subcommand,
-   logic lives here in `internal/popup`): a `huh` form, mode-dependent
-   layout (below). On submit, it writes the caption (possibly empty) to
-   the session's `blog.md` via `internal/blog`, then exits — the process
-   exiting is what closes the floating window, no separate "close window"
-   step needed.
+Because the dialog is spawned **inside the daemon process** (a synchronous
+`exec.Command`), there is no separate popup subprocess and no temp file:
+the captured code text is passed in memory. `zenity` is the only dependency
+(`exec.LookPath("zenity")`, with an error that names the missing binary).
 
-## Layout by mode
+## Dialog by mode
 
-- **`image` mode**: two-region layout — one side shows a label with the
-  captured file's path and, if easily obtainable, its pixel dimensions
-  (e.g. via Go's `image` package reading the PNG header) — do not attempt
-  to render an actual thumbnail, terminals can't reliably do that; a
-  clear text label ("📷 attachments/003.png — 1920×1040") is sufficient.
-  The other side is a `huh.NewText()` caption field.
-- **`code` mode**: same two-region idea — one side renders the captured
-  command+output text verbatim (scrollable via huh/bubbletea's own
-  scrolling if it's long, don't truncate silently), the other side is the
-  caption field.
-- **`note` mode**: no preview region at all — a single full-width
-  `huh.NewText()`.
-- If `huh`'s layout primitives don't cleanly support a literal
-  side-by-side split, stack preview-above/caption-below instead. Priority
-  is both being visible without extra navigation, exact orientation is a
-  secondary concern.
+- **`image` mode**: `zenity --forms` with a `--text` label describing the
+  captured file (relative path + pixel dimensions read from the PNG header
+  via Go's `image` package — do not render a thumbnail) and a single
+  `--add-entry="Caption (optional)"`. The screenshot is not previewed; a
+  text label ("📷 attachments/003.png — 1920×1040") is sufficient.
+- **`code` mode**: `zenity --forms` with a `--text` label showing a
+  truncated preview of the captured command+output (the full text is what
+  lands in blog.md, the preview is just context — truncate, don't grow the
+  window to the size of a full tmux dump) and a single caption entry.
+- **`note` mode**: `zenity --text-info --editable` — a scrollable text
+  area where the user types the note (zenity 4.x < 4.2 has no
+  `--add-multiline-entry`, so `--text-info --editable` is the multiline
+  input).
+- All dialogs get `--width`/`--height` (px) from `[popup].width`/`height`
+  config (0 = let zenity pick), plus a title, `--ok-label=Save` and
+  `--cancel-label=Skip` (note mode: `Discard`).
 
-## Submit / skip behavior
+Dynamic label text is escaped for Pango markup (`& < >` → entities) since
+zenity parses labels as markup.
 
-- Empty submit (user hits the form's submit key with no text typed) =
-  "skip caption" for image/code mode: the image or code block still gets
-  appended to `blog.md`, just with no caption line.
-- Empty submit in `note` mode = discard entirely, nothing appended to
-  `blog.md`. This is different from image/code mode — make sure the two
-  aren't accidentally given identical skip behavior.
-- Use huh's own built-in keybindings for submit/cancel rather than
-  inventing custom ones — don't fight the library's defaults.
-- Esc / window closed without submitting: treat the same as skip (for
-  image/code, the capture itself already happened and should still be
-  recorded without a caption — losing an already-taken screenshot because
-  the user closed the caption box would be a bad outcome). Only `note`
-  mode loses content on cancel, since there's nothing captured yet beyond
-  the text itself.
+## Exit-code → result semantics
+
+zenity exits `0` on the Save/OK button and `1` on cancel/Esc (any other
+code, e.g. timeout, is treated as cancelled). `popup` returns:
+
+- `Submitted=true` + caption text (possibly empty) on Save,
+- `Submitted=false` on cancel/Esc/close.
+
+The submit/skip behavior differs by mode:
+
+- **image/code**: the entry is **always** appended. Empty submit or
+  cancel just means "no caption line". Losing an already-taken screenshot
+  or capture because the user dismissed the caption window would be a bad
+  outcome.
+- **note**: only appended when `Submitted && text != ""`. Cancelled or
+  empty note = discarded entirely — nothing was captured yet beyond the
+  text itself.
+
+`Capture` returns an error **only** on an infrastructure failure (zenity
+missing, spawn failed). In that case nothing is appended and the daemon
+decides the fallback (image/code: append without a caption + notify; note:
+just notify). A user pressing cancel is not an error.
 
 ## Caption placement in blog.md
 
-Actual Markdown formatting (where exactly the caption line goes relative
-to the image/code block, timestamp comment format, etc.) is
-`internal/blog`'s responsibility, not this package's — this package's job
-ends at "here is the caption string (possibly empty) and here is the
-path/text that was captured," handed off as a simple function call into
-`internal/blog`.
+Actual Markdown formatting (caption line relative to the image/code block,
+timestamp comment format, etc.) is `internal/blog`'s responsibility, not
+this package's — this package's job ends at "here is the caption string
+(possibly empty) and here is the path/text that was captured," handed off
+as a simple function call into `internal/blog`.
+
+## What NOT to do here
+
+- No TUI/terminal code paths. Do not reintroduce `huh`, `bubbles`,
+  `lipgloss`, or terminal-emulator spawning — the caption window is a
+  zenity GUI window, period.
+- Don't run zenity in the background expecting it to write blog.md later —
+  the daemon spawns it synchronously (in its capture goroutine), reads the
+  result, and appends itself. A single `Capture` call owns the whole
+  window→append tail end.
+- Don't let a slow dialog block the daemon — `Capture` is blocking by
+  design, so the daemon must call it from a per-capture goroutine (see
+  `internal/daemon/AGENTS.md`), never from the hotkey event loop.

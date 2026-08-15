@@ -98,25 +98,25 @@ install_deps() {
 
   case "$PM" in
     apt)
-      local PKGS="flameshot libnotify-bin xdotool tmux xclip kitty xterm mate-utils"
+      local PKGS="flameshot zenity libnotify-bin tmux mate-utils"
       $SUDO apt-get update || return 1
       $SUDO apt-get install -y $PKGS || return 1
       ;;
     dnf)
-      local PKGS="flameshot libnotify xdotool tmux xclip kitty xterm mate-utils"
+      local PKGS="flameshot zenity libnotify tmux mate-utils"
       $SUDO dnf install -y $PKGS || return 1
       ;;
     pacman)
-      local PKGS="flameshot libnotify xdotool tmux xclip kitty xterm mate-utils"
+      local PKGS="flameshot zenity libnotify tmux mate-utils"
       $SUDO pacman -S --needed --noconfirm $PKGS || return 1
       ;;
     zypper)
-      local PKGS="flameshot libnotify xdotool tmux xclip kitty xterm mate-utils"
+      local PKGS="flameshot zenity libnotify tmux mate-utils"
       $SUDO zypper --non-interactive install $PKGS || return 1
       ;;
     *)
       warn "unsupported distro — install the dependencies manually:"
-      warn "flameshot (or mate-screenshot), notify-send, xdotool, tmux, xclip, kitty/xterm"
+      warn "flameshot (or mate-screenshot), zenity, notify-send, tmux"
       return 0
       ;;
   esac
@@ -127,21 +127,19 @@ if [ "$SKIP_DEPS" -eq 1 ]; then
   info "skipping system dependency install (--skip-deps)"
 elif [ "$(maybe_sudo)" = "" ] && [ "$(id -u)" -ne 0 ]; then
   warn "no root/passwordless sudo available — skipping system dependency install."
-  warn "install these yourself: flameshot/mate-screenshot, libnotify-bin (notify-send),"
-  warn "xdotool, tmux, xclip, and a terminal (kitty/xterm)."
+  warn "install these yourself: flameshot/mate-screenshot, zenity, notify-send, tmux."
 elif ! install_deps; then
   warn "system dependency install failed — install the missing tools manually:"
-  warn "  flameshot/mate-screenshot, notify-send, xdotool, tmux, xclip, kitty/xterm"
+  warn "  flameshot/mate-screenshot, zenity, notify-send, tmux"
 fi
 
 info "checking the tools snapshell actually needs..."
 command -v flameshot >/dev/null 2>&1 || command -v mate-screenshot >/dev/null 2>&1 \
   || warn "no screenshot tool found — Alt+1 will notify an error. Install flameshot or mate-screenshot."
+command -v zenity >/dev/null 2>&1 \
+  || warn "zenity not found — the caption/note window won't open. Install zenity."
 command -v notify-send >/dev/null 2>&1 || warn "notify-send not found — install libnotify-bin (errors will be silent)."
-command -v xdotool >/dev/null 2>&1 || warn "xdotool not found — the popup window won't be centered/focused (it still opens)."
 command -v tmux >/dev/null 2>&1 || warn "tmux not found — Alt+2 (command capture) needs it."
-command -v kitty >/dev/null 2>&1 || command -v xterm >/dev/null 2>&1 \
-  || warn "no terminal emulator found for the popup — install kitty or xterm."
 
 # ---------------------------------------------------------------------------
 # 3. Build + install the binary

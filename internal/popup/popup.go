@@ -1,136 +1,162 @@
 // Package popup owns the floating caption/note window shown after a
-// capture. It has two halves: Spawn launches the floating terminal that
-// runs `snapshell internal-popup`, and Run is the huh TUI that runs inside
-// that terminal and appends the finished entry to blog.md.
+// capture. It spawns a zenity GTK form dialog (a real popup window — no
+// TUI), collects the caption or note text, and appends the finished entry
+// to blog.md.
 package popup
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
 	"image"
 	_ "image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
-
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 
 	"snapshell/internal/blog"
 )
 
-// Popup modes, matching the internal-popup --mode flag.
+// Popup modes.
 const (
 	ModeImage = "image"
 	ModeCode  = "code"
 	ModeNote  = "note"
 )
 
-// Run collects the caption (image/code modes) or the note text (note mode)
-// with a huh form and appends the finished entry to <sessionDir>/blog.md.
-// It runs inside the spawned floating terminal.
-//
-// file is the captured image path relative to the session dir (image mode)
-// or the temp file holding the captured command+output text (code mode);
-// ignored in note mode.
-//
-// Empty submit = "skip caption" for image/code (the entry is still
-// appended) but discards note mode entirely. Esc/cancel behaves the same
-// way: image/code still append without a caption, note loses its text.
-func Run(mode, file, sessionDir string) error {
-	var caption string
+// Result carries what the form produced.
+type Result struct {
+	// Text is the caption (image/code modes) or the note text (note mode),
+	// trimmed. May be empty.
+	Text string
+	// Submitted is true when the user pressed the save button; false when
+	// they cancelled, closed the window, or it timed out.
+	Submitted bool
+}
 
-	group := []*huh.Group{}
+// Capture shows the caption/note window for a capture and appends the
+// finished entry to <sessionDir>/blog.md. It blocks until the dialog
+// closes, so callers must run it in their own goroutine (the daemon does —
+// a slow/ignored popup must never block the next hotkey press).
+//
+// file is the captured image path relative to the session dir (image
+// mode); text is the captured command+output text (code mode) or ignored
+// (note mode). width/height size the dialog in pixels (0 = zenity's own
+// choice).
+//
+// Empty or cancelled submit = "skip caption" for image/code (the entry is
+// still appended — losing an already-taken screenshot because the caption
+// window was dismissed would be a bad outcome) but discards note mode
+// entirely, since nothing was captured yet beyond the text itself.
+//
+// Capture returns an error only on an infrastructure failure (zenity
+// missing, dialog failed to launch) — in that case nothing is appended and
+// the caller decides how to fall back. A user pressing cancel is not an
+// error.
+func Capture(mode, sessionDir, file, text string, width, height int) error {
+	res, err := askDialog(mode, sessionDir, file, text, width, height)
+	if err != nil {
+		return err
+	}
+	return applyResult(mode, res, file, text, sessionDir)
+}
+
+// askDialog launches the zenity window and returns what the user did.
+func askDialog(mode, sessionDir, file, text string, width, height int) (Result, error) {
+	bin, err := resolveZenity()
+	if err != nil {
+		return Result{}, err
+	}
+
+	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height)...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err = cmd.Run()
+
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	}
+	// zenity exits 0 on the OK/save button and 1 on cancel/Esc; anything
+	// else (timeout, crash) is treated as cancelled — still a no-op for
+	// image/code, a discard for notes.
+	return Result{Text: strings.TrimSpace(out.String()), Submitted: code == 0}, nil
+}
+
+// zenityArgs builds the zenity argv for a mode.
+func zenityArgs(mode, sessionDir, file, text string, width, height int) []string {
+	args := []string{}
+	if width > 0 {
+		args = append(args, "--width", strconv.Itoa(width))
+	}
+	if height > 0 {
+		args = append(args, "--height", strconv.Itoa(height))
+	}
 
 	switch mode {
 	case ModeImage:
-		group = append(group, huh.NewGroup(
-			previewNote(describeImage(filepath.Join(sessionDir, file), file)),
-			huh.NewText().Title("Caption (optional)").Placeholder("What did this screenshot capture?").Value(&caption),
-		))
+		label := describeImage(filepath.Join(sessionDir, file), file)
+		return append(args, "--forms",
+			"--title=snapshell — add screenshot",
+			"--text="+escapeMarkup(label),
+			"--add-entry=Caption (optional)",
+			"--ok-label=Save",
+			"--cancel-label=Skip",
+		)
 	case ModeCode:
-		text, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("popup code mode: read captured text: %v", err)
-		}
-		defer os.Remove(file) // the temp capture file is ours to clean up
-		group = append(group, huh.NewGroup(
-			huh.NewNote().Title("Captured command").Description(string(text)),
-			huh.NewText().Title("Caption (optional)").Placeholder("What does this command show?").Value(&caption),
-		))
+		return append(args, "--forms",
+			"--title=snapshell — add command",
+			"--text="+escapeMarkup(truncatePreview(text)),
+			"--add-entry=Caption (optional)",
+			"--ok-label=Save",
+			"--cancel-label=Skip",
+		)
 	case ModeNote:
-		group = append(group, huh.NewGroup(
-			huh.NewText().Title("Note").Placeholder("Type your note...").Value(&caption),
-		))
+		return append(args, "--text-info", "--editable",
+			"--title=snapshell — note",
+			"--text=Write your note below, then press Save.",
+			"--ok-label=Save",
+			"--cancel-label=Discard",
+		)
 	default:
-		return fmt.Errorf("unknown popup mode %q", mode)
+		return append(args, "--forms",
+			"--title=snapshell",
+			"--add-entry=Caption (optional)",
+			"--ok-label=Save",
+			"--cancel-label=Skip",
+		)
 	}
-
-	// huh's default quit binding is Ctrl+C; also accept Esc so the user can
-	// cancel the caption window the same way they'd close any other window.
-	// Both map to ErrUserAborted, handled below.
-	km := huh.NewDefaultKeyMap()
-	km.Quit = key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "cancel"))
-
-	form := huh.NewForm(group...).
-		WithKeyMap(km).
-		WithTheme(frameTheme(mode))
-	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			// Esc/close: image/code still record the capture (no caption);
-			// note mode has nothing to record.
-			if mode == ModeNote {
-				return nil
-			}
-			caption = ""
-		} else {
-			return fmt.Errorf("popup form: %v", err)
-		}
-	}
-
-	return appendResult(mode, caption, file, sessionDir)
 }
 
-// appendResult writes the finished entry to blog.md. Factored out of Run so
-// tests can exercise the blog-append behaviour without a TTY.
-func appendResult(mode, caption, file, sessionDir string) error {
+// applyResult writes the finished entry to blog.md. Factored out of
+// Capture so tests can exercise the blog-append behaviour without a live
+// dialog.
+func applyResult(mode string, res Result, file, text, sessionDir string) error {
 	switch mode {
 	case ModeImage:
-		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindImage, Caption: caption, ImagePath: file})
+		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindImage, Caption: res.Text, ImagePath: file})
 	case ModeCode:
-		text, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("read captured text: %v", err)
-		}
-		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindCode, Caption: caption, CodeText: string(text)})
+		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindCode, Caption: res.Text, CodeText: text})
 	case ModeNote:
-		if strings.TrimSpace(caption) == "" {
-			return nil // empty note = discard entirely
+		if !res.Submitted || strings.TrimSpace(res.Text) == "" {
+			return nil // cancelled or empty note = discard entirely
 		}
-		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindNote, NoteText: caption})
+		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindNote, NoteText: res.Text})
 	default:
 		return fmt.Errorf("unknown popup mode %q", mode)
 	}
 }
 
-// previewNote builds the non-interactive preview region shown above the
-// caption field.
-func previewNote(desc string) *huh.Note {
-	return huh.NewNote().Title("Preview").Description(desc)
-}
-
-// frameTheme styles the popup so it reads as a distinct framed window
-// instead of blending into whatever is behind it: a thin rounded border
-// drawn around the entire form. The border is applied to the form's base
-// style, which huh wraps the whole form view in.
-func frameTheme(mode string) *huh.Theme {
-	theme := huh.ThemeCharm()
-	theme.Form.Base = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("245")).
-		Padding(0, 1, 1, 1)
-	return theme
+// resolveZenity finds a usable zenity binary, erroring with a specific
+// message naming the missing binary (subprocess deps always fail loudly,
+// never silently).
+func resolveZenity() (string, error) {
+	bin, err := exec.LookPath("zenity")
+	if err != nil {
+		return "", fmt.Errorf("the caption window needs zenity, but 'zenity' was not found on PATH — install it (e.g. apt install zenity) and retry")
+	}
+	return bin, nil
 }
 
 // describeImage renders the image-mode preview label, including pixel
@@ -145,6 +171,7 @@ func describeImage(readPath, displayPath string) string {
 	return fmt.Sprintf("📷 %s — %dx%d", displayPath, dim.Width, dim.Height)
 }
 
+// imageSize reads the dimensions from an image file header.
 func imageSize(path string) (image.Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -155,17 +182,23 @@ func imageSize(path string) (image.Config, error) {
 	return cfg, err
 }
 
-// TempCodeFile writes captured command+output text to a temp file so the
-// popup (a separate process) can read it. Returns the path. The popup
-// removes the file after use.
-func TempCodeFile(text string) (string, error) {
-	f, err := os.CreateTemp("", "snapshell-code-*.txt")
-	if err != nil {
-		return "", fmt.Errorf("create temp capture file: %v", err)
+// truncatePreview shortens the captured command+output for the dialog's
+// label so the window doesn't grow to the size of a full tmux dump. The
+// full text is what lands in blog.md.
+func truncatePreview(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) <= 400 {
+		return trimmed
 	}
-	defer f.Close()
-	if _, err := f.WriteString(text); err != nil {
-		return "", fmt.Errorf("write temp capture file: %v", err)
-	}
-	return filepath.Clean(f.Name()), nil
+	return trimmed[:400] + "\n…"
+}
+
+// escapeMarkup neutralizes Pango markup characters in dynamic label text —
+// zenity parses labels as Pango markup, so a captured '&' or '<' would
+// otherwise garble the window.
+func escapeMarkup(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
 }

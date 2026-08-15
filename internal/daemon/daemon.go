@@ -498,8 +498,18 @@ func (d *Daemon) captureScreenshot(s *Session) {
 		return
 	}
 
-	d.appendWithPopup(s, popup.ModeImage, res.RelPath,
-		blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath})
+	// The caption window runs inside this capture goroutine, so a slow or
+	// ignored dialog never blocks the daemon or the next hotkey press.
+	// The dialog failing must not lose the screenshot that was just taken:
+	// it is still appended, just without a caption.
+	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Popup.Width, d.cfg.Popup.Height); err != nil {
+		d.logger.Printf("capture screenshot: popup: %v", err)
+		_ = notify.Send("snapshell", err.Error())
+		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath}); err != nil {
+			d.logger.Printf("capture screenshot: fallback append blog: %v", err)
+		}
+		return
+	}
 }
 
 // captureCode runs the Alt+2 flow: the last command's text (focused tmux
@@ -525,23 +535,25 @@ func (d *Daemon) captureCode(s *Session) {
 	d.appendCodeEntry(s, res.Text, "tmux")
 }
 
-// appendCodeEntry is the shared tail of both code-capture paths: stage the
-// text for a caption, then append it to blog.md.
+// appendCodeEntry is the shared tail of both code-capture paths: show the
+// caption window for the captured text, then append it to blog.md.
 func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
 	if strings.TrimSpace(text) == "" {
 		d.logger.Printf("capture %s: empty capture, no entry added", source)
 		return
 	}
 
-	tmp, err := popup.TempCodeFile(text)
-	if err != nil {
-		d.logger.Printf("capture %s: write temp file: %v", source, err)
-		_ = notify.Send("snapshell", "failed to stage captured command: "+err.Error())
+	// Same reasoning as the image flow: the captured command text is
+	// valuable on its own, so if the caption window can't spawn the entry
+	// is still appended without a caption.
+	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Popup.Width, d.cfg.Popup.Height); err != nil {
+		d.logger.Printf("capture %s: popup: %v", source, err)
+		_ = notify.Send("snapshell", err.Error())
+		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
+			d.logger.Printf("capture %s: fallback append blog: %v", source, err)
+		}
 		return
 	}
-
-	d.appendWithPopup(s, popup.ModeCode, tmp,
-		blog.Entry{Kind: blog.KindCode, CodeText: text})
 }
 
 // readLastCommand returns the most recent command text recorded by the
@@ -554,82 +566,15 @@ func readLastCommand() (string, error) {
 	return strings.TrimRight(string(data), "\n"), nil
 }
 
-// captureNote runs the Alt+3 flow: stage the note for inline captioning
-// at the next prompt, or spawn the floating note popup when inline is
-// disabled. The form collects the text and appends it to blog.md itself;
-// there is no fallback entry — the note text only exists inside the form.
+// captureNote runs the Alt+3 flow: a note form window collects the text
+// and appends it to blog.md itself. There is no fallback entry — the note
+// text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
-	if d.stageCapture(popup.ModeNote, "", s.Dir) {
-		return
-	}
-	if err := d.spawnPopup(popup.ModeNote, "", s.Dir); err != nil {
-		d.logger.Printf("capture note: %v", err)
+	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Popup.Width, d.cfg.Popup.Height); err != nil {
+		d.logger.Printf("capture note: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return
 	}
-	d.logger.Printf("capture note popup spawned")
-}
-
-// spawnPopup resolves the configured popup terminal and launches the
-// floating window. Resolving the terminal here (rather than inside popup)
-// keeps tool resolution in internal/config.
-func (d *Daemon) spawnPopup(mode, file, sessionDir string) error {
-	term, err := d.cfg.ResolvePopupTerminal()
-	if err != nil {
-		return err
-	}
-	return popup.Spawn(selfExe(), mode, file, sessionDir,
-		term, d.cfg.Popup.WidthCells, d.cfg.Popup.HeightCells)
-}
-
-// appendWithPopup is the shared tail of the image/code flows: stage the
-// capture for an inline caption, or spawn the popup to collect a caption
-// and append the entry. In the spawned-window path the popup writes the
-// entry (with or without caption) to blog.md itself; if the popup can't
-// spawn, the capture is still appended without a caption — losing an
-// already-taken screenshot or capture because the caption window failed
-// would be a worse outcome.
-func (d *Daemon) appendWithPopup(s *Session, mode, file string, fallback blog.Entry) {
-	if d.stageCapture(mode, file, s.Dir) {
-		return
-	}
-	if err := d.spawnPopup(mode, file, s.Dir); err != nil {
-		d.logger.Printf("capture %s: spawn popup: %v", mode, err)
-		_ = notify.Send("snapshell", err.Error())
-		if err := blog.Append(s.Dir, fallback); err != nil {
-			d.logger.Printf("capture %s: fallback append blog: %v", mode, err)
-		}
-		return
-	}
-	d.logger.Printf("capture %s popup spawned", mode)
-}
-
-// stageCapture writes a pending-capture request so the shell hook can run
-// the caption form inline at the user's next shell prompt (fzf-style, no
-// new window). Returns true when the capture was staged; the caller then
-// stops — the form itself appends the finished entry to blog.md.
-func (d *Daemon) stageCapture(mode, file, sessionDir string) bool {
-	if !d.cfg.PopupInline() {
-		return false
-	}
-	if err := WritePending(PendingCapture{Mode: mode, File: file, SessionDir: sessionDir}); err != nil {
-		d.logger.Printf("capture %s: stage inline caption: %v", mode, err)
-		_ = notify.Send("snapshell", "failed to stage inline caption: "+err.Error())
-		return false
-	}
-	d.logger.Printf("capture %s staged for inline caption at next shell prompt", mode)
-	_ = notify.Send("snapshell", "captured — caption prompt will appear at your next shell prompt")
-	return true
-}
-
-// selfExe returns the running daemon's own binary path, which the popup
-// terminal re-invokes as `snapshell internal-popup`.
-func selfExe() string {
-	p, err := os.Executable()
-	if err != nil {
-		return "snapshell"
-	}
-	return p
 }
 
 func (d *Daemon) handleSignals() {

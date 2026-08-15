@@ -7,10 +7,11 @@ import (
 	"testing"
 )
 
-func TestAppendNote(t *testing.T) {
+func TestApplyNote(t *testing.T) {
 	dir := t.TempDir()
-	if err := appendResult(ModeNote, "found port 445 open", "", dir); err != nil {
-		t.Fatalf("appendResult: %v", err)
+	res := Result{Text: "found port 445 open", Submitted: true}
+	if err := applyResult(ModeNote, res, "", "", dir); err != nil {
+		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
 	if !strings.Contains(string(data), "found port 445 open") {
@@ -21,20 +22,27 @@ func TestAppendNote(t *testing.T) {
 	}
 }
 
-func TestAppendEmptyNoteDiscards(t *testing.T) {
-	dir := t.TempDir()
-	if err := appendResult(ModeNote, "   ", "", dir); err != nil {
-		t.Fatalf("appendResult: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "blog.md")); !os.IsNotExist(err) {
-		t.Fatal("empty note must not create blog.md")
+func TestApplyEmptyOrCancelledNoteDiscards(t *testing.T) {
+	for name, res := range map[string]Result{
+		"empty submitted":    {Text: "   ", Submitted: true},
+		"cancelled":          {Text: "note that was typed", Submitted: false},
+		"cancelled and text": {Text: "", Submitted: false},
+	} {
+		dir := t.TempDir()
+		if err := applyResult(ModeNote, res, "", "", dir); err != nil {
+			t.Fatalf("%s: applyResult: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "blog.md")); !os.IsNotExist(err) {
+			t.Fatalf("%s: empty/cancelled note must not create blog.md", name)
+		}
 	}
 }
 
-func TestAppendImageWithCaption(t *testing.T) {
+func TestApplyImageWithCaption(t *testing.T) {
 	dir := t.TempDir()
-	if err := appendResult(ModeImage, "rooted it", "attachments/001.png", dir); err != nil {
-		t.Fatalf("appendResult: %v", err)
+	res := Result{Text: "rooted it", Submitted: true}
+	if err := applyResult(ModeImage, res, "attachments/001.png", "", dir); err != nil {
+		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
 	if !strings.Contains(string(data), "**rooted it**") {
@@ -45,126 +53,117 @@ func TestAppendImageWithCaption(t *testing.T) {
 	}
 }
 
-func TestAppendImageNoCaption(t *testing.T) {
-	dir := t.TempDir()
-	if err := appendResult(ModeImage, "", "attachments/001.png", dir); err != nil {
-		t.Fatalf("appendResult: %v", err)
-	}
-	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
-	if strings.Contains(string(data), "**") {
-		t.Fatalf("empty caption must be omitted, got %q", data)
-	}
-	if !strings.Contains(string(data), "![](attachments/001.png)") {
-		t.Fatalf("image must still be appended, got %q", data)
+func TestApplyImageNoCaption(t *testing.T) {
+	// Cancelling the caption window still records the screenshot.
+	for name, res := range map[string]Result{
+		"empty submitted": {Text: "", Submitted: true},
+		"cancelled":       {Text: "", Submitted: false},
+	} {
+		dir := t.TempDir()
+		if err := applyResult(ModeImage, res, "attachments/001.png", "", dir); err != nil {
+			t.Fatalf("%s: applyResult: %v", name, err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
+		if strings.Contains(string(data), "**") {
+			t.Fatalf("%s: empty caption must be omitted, got %q", name, data)
+		}
+		if !strings.Contains(string(data), "![](attachments/001.png)") {
+			t.Fatalf("%s: image must still be appended, got %q", name, data)
+		}
 	}
 }
 
-func TestAppendCode(t *testing.T) {
+func TestApplyCode(t *testing.T) {
 	dir := t.TempDir()
-	tmp, err := TempCodeFile("┌─[root@box]# nmap -sV 10.10.11.5\n22/tcp open  ssh\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(tmp)
-
-	if err := appendResult(ModeCode, "", tmp, dir); err != nil {
-		t.Fatalf("appendResult: %v", err)
+	res := Result{Text: "port scan", Submitted: true}
+	text := "┌─[root@box]# nmap -sV 10.10.11.5\n22/tcp open  ssh\n"
+	if err := applyResult(ModeCode, res, "", text, dir); err != nil {
+		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
-	for _, want := range []string{"```console", "nmap -sV 10.10.11.5", "```"} {
+	for _, want := range []string{"**port scan**", "```console", "nmap -sV 10.10.11.5", "```"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("code entry missing %q:\n%s", want, data)
 		}
 	}
 }
 
-func TestSpawnFallsBackThroughTerminals(t *testing.T) {
-	binDir := t.TempDir()
-	// Only kitty exists on the isolated PATH → resolveTerminal must pick it
-	// over the missing configured alacritty.
-	for _, name := range []string{"kitty", "xterm"} {
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
+func TestApplyCodeCancelledStillAppends(t *testing.T) {
+	dir := t.TempDir()
+	if err := applyResult(ModeCode, Result{Submitted: false}, "", "whoami\nroot\n", dir); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
+	if !strings.Contains(string(data), "```console") || strings.Contains(string(data), "**") {
+		t.Fatalf("cancelled code capture should append without a caption:\n%s", data)
+	}
+}
+
+func TestApplyUnknownMode(t *testing.T) {
+	if err := applyResult("bogus", Result{}, "", "", t.TempDir()); err == nil {
+		t.Fatal("unknown mode should error")
+	}
+}
+
+func TestZenityArgsImage(t *testing.T) {
+	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--forms", "--width", "520", "--height", "300",
+		"--add-entry=Caption (optional)", "--ok-label=Save", "--cancel-label=Skip"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("image args missing %q: %v", want, args)
 		}
 	}
-	t.Setenv("PATH", binDir)
+}
 
-	term, err := resolveTerminal("alacritty")
-	if err != nil {
-		t.Fatalf("resolveTerminal: %v", err)
+func TestZenityArgsCodeTruncatesPreview(t *testing.T) {
+	long := strings.Repeat("x", 500)
+	args := zenityArgs(ModeCode, "", "", long, 0, 0)
+	found := false
+	for _, a := range args {
+		if strings.HasPrefix(a, "--text=") {
+			if len(a) > 500 || !strings.HasSuffix(a, "…") {
+				t.Fatalf("code preview should be truncated: %q", a)
+			}
+			found = true
+		}
 	}
-	if term != "kitty" {
-		t.Fatalf("want kitty fallback, got %q", term)
+	if !found {
+		t.Fatalf("code args missing a --text label: %v", args)
 	}
 }
 
-func TestSpawnNoTerminal(t *testing.T) {
+func TestZenityArgsNote(t *testing.T) {
+	args := zenityArgs(ModeNote, "", "", "", 560, 400)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--text-info", "--editable", "--ok-label=Save", "--cancel-label=Discard"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("note args missing %q: %v", want, args)
+		}
+	}
+}
+
+func TestEscapeMarkup(t *testing.T) {
+	got := escapeMarkup("a <b> & \"c\"")
+	if got != "a &lt;b&gt; &amp; \"c\"" {
+		t.Fatalf("escapeMarkup = %q", got)
+	}
+}
+
+func TestTruncatePreview(t *testing.T) {
+	if got := truncatePreview("  short \n"); got != "short" {
+		t.Fatalf("short preview should be trimmed, got %q", got)
+	}
+	long := strings.Repeat("y", 500)
+	got := truncatePreview(long)
+	if got != strings.Repeat("y", 400)+"\n…" {
+		t.Fatalf("long preview should be 400 chars + ellipsis, got %q", got)
+	}
+}
+
+func TestResolveZenityMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // empty
-	if _, err := resolveTerminal(""); err == nil {
-		t.Fatal("no terminal should error")
-	}
-}
-
-func TestCommandArgsByTerminal(t *testing.T) {
-	argv := []string{"/home/u/bin/snapshell", "internal-popup",
-		"--mode", "code", "--file", "/tmp/a b.txt", "--session-dir", "/sessions/my box"}
-
-	alac := commandArgs("alacritty", argv)
-	wantAlac := []string{"-e", "/home/u/bin/snapshell", "internal-popup",
-		"--mode", "code", "--file", "/tmp/a b.txt", "--session-dir", "/sessions/my box"}
-	if strings.Join(alac, "\x00") != strings.Join(wantAlac, "\x00") {
-		t.Fatalf("alacritty args = %q, want %q", alac, wantAlac)
-	}
-
-	mt := commandArgs("mate-terminal", argv)
-	wantMT := []string{"-e", "'/home/u/bin/snapshell' 'internal-popup' '--mode' 'code' '--file' '/tmp/a b.txt' '--session-dir' '/sessions/my box'"}
-	if strings.Join(mt, "\x00") != strings.Join(wantMT, "\x00") {
-		t.Fatalf("mate-terminal args = %q, want %q", mt, wantMT)
-	}
-
-	gnome := commandArgs("gnome-terminal", argv)
-	wantGnome := []string{"--disable-factory", "--", "/home/u/bin/snapshell", "internal-popup",
-		"--mode", "code", "--file", "/tmp/a b.txt", "--session-dir", "/sessions/my box"}
-	if strings.Join(gnome, "\x00") != strings.Join(wantGnome, "\x00") {
-		t.Fatalf("gnome-terminal args = %q, want %q", gnome, wantGnome)
-	}
-
-	xfce := commandArgs("xfce4-terminal", argv)
-	if xfce[0] != "-x" || xfce[1] != "/home/u/bin/snapshell" {
-		t.Fatalf("xfce4-terminal should pass argv directly after -x, got %q", xfce)
-	}
-
-	konsole := commandArgs("konsole", argv)
-	if konsole[0] != "-e" || konsole[1] != "/home/u/bin/snapshell" {
-		t.Fatalf("konsole should pass argv directly after -e, got %q", konsole)
-	}
-}
-
-func TestClassAndDimensionFlags(t *testing.T) {
-	if got := classFlags("mate-terminal"); !strings.Contains(strings.Join(got, " "), "--class=snapshell-popup") {
-		t.Fatalf("mate-terminal class flags = %q, want --class=snapshell-popup", got)
-	}
-	if got := dimensionsFlags("mate-terminal", 100, 30); len(got) != 1 || got[0] != "--geometry=100x30" {
-		t.Fatalf("mate-terminal dims = %q, want --geometry=100x30", got)
-	}
-	if got := dimensionsFlags("konsole", 100, 30); len(got) != 2 || got[1] != "100x30" {
-		t.Fatalf("konsole dims = %q, want --geometry 100x30", got)
-	}
-	if got := dimensionsFlags("gnome-terminal", 80, 24); len(got) != 1 || got[0] != "--geometry=80x24" {
-		t.Fatalf("gnome-terminal dims = %q, want --geometry=80x24", got)
-	}
-	if got := dimensionsFlags("xfce4-terminal", 80, 24); len(got) != 1 || got[0] != "--geometry=80x24" {
-		t.Fatalf("xfce4-terminal dims = %q, want --geometry=80x24", got)
-	}
-	if got := classFlags("konsole"); len(got) == 0 || got[0] != "--separate" {
-		t.Fatalf("konsole class flags = %q, want --separate first", got)
-	}
-}
-
-func TestShellQuoteArgsEscapesSingleQuote(t *testing.T) {
-	got := shellQuoteArgs([]string{"a'b", "plain"})
-	want := "'a'\\''b' 'plain'"
-	if got != want {
-		t.Fatalf("shellQuoteArgs = %q, want %q", got, want)
+	if _, err := resolveZenity(); err == nil {
+		t.Fatal("missing zenity should error")
 	}
 }

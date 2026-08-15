@@ -18,13 +18,9 @@ plain files.
 - Linux + X11 (Wayland is not supported)
 - tmux — required for full command+output capture (see *Plain shell* below)
 - a screenshot tool: **flameshot** (default) or **mate-screenshot**
+- **zenity** — the caption/note popup is a zenity GTK dialog window
 - `notify-send` (libnotify) for notifications
-- a terminal emulator for the optional floating caption window
-  (alacritty, kitty, mate-terminal, gnome-terminal, xfce4-terminal,
-  konsole, xterm, ...)
 - Go 1.24+ to build from source
-
-Optional: `xdotool` centers/focuses the floating caption window.
 
 ---
 
@@ -125,11 +121,12 @@ the attachment numbering).
   the command's *text* instead of row markers, and Alt+2 falls back to
   that. You get the command line (a notification explains that full
   output capture needs tmux).
-- **Captions inline.** By default the caption prompt appears **inline in
-  your terminal at the next shell prompt** (fzf-style — no new window).
-  The daemon stages a pending request; the shell hook spots it and shows
-  the form in place. Set `[popup] inline = false` to go back to a floating
-  terminal window instead.
+- **Captions in a zenity window.** After each capture a small zenity
+  dialog pops up: a caption field for screenshots and commands, or a
+  multi-line text box for notes. Save appends the entry with your caption;
+  Skip (or Esc) appends screenshots/commands without one and discards
+  notes. The dialog runs in its own capture goroutine, so leaving it open
+  never blocks the next hotkey.
 - **The blog file.** Each entry is appended to the session's `blog.md`:
   a hidden timestamp comment, an optional bold caption, then the
   screenshot (`![](attachments/NNN.png)`) or a ```console``` code block
@@ -146,11 +143,11 @@ the attachment numbering).
 | Alt+2  | Last tmux command + full output (or last command text) → caption → code entry |
 | Alt+3  | Raw note → paragraph entry |
 
-In the caption form, an empty submit or **Esc**:
+In the caption dialog, an empty submit or **Skip/Esc**:
 - image/code: the entry is still appended, just without a caption;
 - note: discarded (there is nothing captured yet).
 
-Ignoring or closing the caption form never blocks the daemon or the next
+Ignoring or closing the caption dialog never blocks the daemon or the next
 hotkey.
 
 ---
@@ -165,11 +162,8 @@ documented inline:
   tool = "flameshot"        # "flameshot" or "mate-screenshot"
 
 [popup]
-  terminal = "alacritty"    # floating-window terminal; missing ones fall
-                            # back through a built-in list
-  width_cells = 100
-  height_cells = 30
-  inline = true             # caption form at your next shell prompt; false = floating window
+  width = 560              # caption window size in pixels (0 = let zenity pick)
+  height = 320
 
 [capture]
   include_output = true     # false = Alt+2 captures only the command line, no output
@@ -179,9 +173,8 @@ documented inline:
 ```
 
 Partial files are fine — missing keys get defaults. `~` is expanded in
-paths. If the configured screenshot tool or popup terminal is missing on
-`PATH`, snapshell falls back through a sensible list and logs which one it
-used.
+paths. If the configured screenshot tool is missing on `PATH`, snapshell
+falls back through a sensible list and logs which one it used.
 
 ---
 
@@ -193,7 +186,6 @@ used.
     daemon.log                        human-readable daemon log
     daemon.sock, daemon.pid           IPC socket + PID file
     markers/<pane>.last               tmux row markers (shell hook)
-    pending.json                      staged capture awaiting its inline caption
     lastcommand                       recorded command text (plain-shell fallback)
 ~/snapshell/<session>/                each session's folder
     blog.md                           the documentation, append-only
@@ -229,9 +221,9 @@ grab hotkeys). With the unit active you don't need the auto-launch from
 - **Alt+2 captures nothing in tmux.** Run at least one command first (the
   marker for the first command in a fresh pane is an edge case), and make
   sure the hook is active in that pane.
-- **Missing external tool.** Every subprocess (flameshot, tmux,
-  notify-send, the popup terminal, xdotool) is checked on `PATH` and fails
-  with a message naming exactly what's missing — install it and retry.
+- **Missing external tool.** Every subprocess (flameshot, tmux, zenity,
+  notify-send) is checked on `PATH` and fails with a message naming exactly
+  what's missing — install it and retry.
 - **The daemon lingers after `stop`.** It releases X11 hotkey grabs on
   shutdown, which can take a moment; wait ~1s before restarting.
 
@@ -253,7 +245,7 @@ internal/hotkeys/         X11 global key grabbing
 internal/capture/screenshot/  screenshot tool invocation
 internal/capture/tmuxcap/     tmux pane capture by row range
 internal/shellhook/       bash/zsh hook scripts + marker files
-internal/popup/           huh-based caption/note form (inline + window)
+internal/popup/           zenity caption/note window (no TUI)
 internal/blog/            blog.md writer, formatting contract
 internal/config/          TOML config schema + defaults
 systemd/                  user service unit

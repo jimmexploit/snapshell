@@ -12,18 +12,15 @@ not by reading TOML itself.
 tool = "flameshot"        # or "mate-screenshot"
 
 [popup]
-terminal = "alacritty"    # falls back through kitty, xterm if not found
-width_cells = 100
-height_cells = 30
+width = 560               # caption window size in px (0 = let zenity pick)
+height = 320
+
+[capture]
+include_output = true     # false = Alt+2 captures only the command line
 
 [paths]
-session_root = "~/htblog"
+session_root = "~/snapshell"
 ```
-
-Wait — check `session_root`'s default against the rest of the spec: the
-project-wide default session root is `~/snapshell`, not `~/htblog` (that
-was the tool's old working name before it was renamed). Use
-`~/snapshell` as the actual default value here.
 
 ## Behavior
 
@@ -41,24 +38,21 @@ was the tool's old working name before it was renamed). Use
   e.g.:
   ```go
   func (c *Config) ResolveScreenshotTool() (bin string, err error)
-  func (c *Config) ResolvePopupTerminal() (bin string, err error)
   ```
-  Each checks the configured value against `exec.LookPath`, falls through
-  the documented fallback list (screenshot: flameshot → mate-screenshot;
-  terminal: configured → alacritty → kitty → xterm), and returns a
-  specific error naming every option that was tried and not found if all
-  of them fail — so the eventual `notify-send`/log message can be
-  concrete ("none of alacritty, kitty, xterm found on PATH") rather than
-  vague.
+  It checks the configured value against `exec.LookPath`, falls through
+  the documented fallback list (screenshot: flameshot → mate-screenshot),
+  and returns a specific error naming every option that was tried and not
+  found if all of them fail — so the eventual `notify-send`/log message
+  can be concrete ("none of flameshot, mate-screenshot found on PATH")
+  rather than vague. (zenity is not resolved here — `internal/popup` does
+  its own `exec.LookPath` and names the missing binary itself.)
 
 ## What NOT to do here
 
-- Don't validate `width_cells`/`height_cells` against actual screen
-  resolution or attempt "smart" auto-sizing — take the configured numbers
-  as-is and hand them to `internal/popup`'s window-spawning code, which
-  passes them straight to the terminal emulator's `-o
-  window.dimensions.columns/lines`-style flags (exact flags vary by
-  emulator, that's `internal/popup`'s concern, not this package's).
+- Don't validate `width`/`height` against actual screen resolution or
+  attempt "smart" auto-sizing — take the configured numbers as-is and hand
+  them to `internal/popup`, which passes them to zenity's `--width`/
+  `--height`.
 - Don't add config keys beyond what's listed above unless a build step
   elsewhere in this repo's AGENTS.md files explicitly references one that
   doesn't exist yet here — keep schema and usage in sync rather than
