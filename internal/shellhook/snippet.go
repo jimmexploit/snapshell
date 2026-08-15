@@ -19,6 +19,16 @@ if [ -n "$TMUX" ] && command -v snapshell >/dev/null 2>&1; then
   _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
   _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell shellhook mark --pane "$TMUX_PANE" --phase end)"; }
 
+  _snapshell_inline_popup() {
+    # Run the staged caption form inline at this prompt (fzf-style).
+    # Suspend marker recording while it runs so the DEBUG trap doesn't
+    # treat the form as a user command.
+    local prev="${_SNAPSHELL_STARTED:-}"
+    _SNAPSHELL_STARTED=1
+    snapshell internal-popup-inline
+    _SNAPSHELL_STARTED="$prev"
+  }
+
   _snapshell_preexec() {
     # Record the start row only once per command line; later DEBUG events
     # inside compound commands must not overwrite it with a later row.
@@ -31,6 +41,7 @@ if [ -n "$TMUX" ] && command -v snapshell >/dev/null 2>&1; then
     [ -n "${_SNAPSHELL_STARTED:-}" ] || return 0
     _snapshell_mark_end
     unset _SNAPSHELL_STARTED
+    _snapshell_inline_popup
   }
 
   if declare -p __bp_preexec_functions >/dev/null 2>&1; then
@@ -80,8 +91,15 @@ if [ -n "$TMUX" ] && (( $+commands[snapshell] )); then
   autoload -Uz add-zsh-hook
   _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
   _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell shellhook mark --pane "$TMUX_PANE" --phase end)"; }
+  _snapshell_inline_popup() {
+    snapshell internal-popup-inline
+  }
+  _snapshell_precmd() {
+    _snapshell_mark_end
+    _snapshell_inline_popup
+  }
   add-zsh-hook preexec _snapshell_mark_start
-  add-zsh-hook precmd  _snapshell_mark_end
+  add-zsh-hook precmd  _snapshell_precmd
 fi
 `
 

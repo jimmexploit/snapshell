@@ -130,4 +130,10 @@ func TestSnippetsMentionShell(t *testing.T) {
 	if !strings.Contains(ZshSnippet, "preexec") || !strings.Contains(ZshSnippet, "precmd") {
 		t.Fatal("zsh snippet must use preexec + precmd")
 	}
+	if !strings.Contains(BashSnippet, "internal-popup-inline") {
+		t.Fatal("bash snippet must run the inline caption form at the prompt")
+	}
+	if !strings.Contains(ZshSnippet, "internal-popup-inline") {
+		t.Fatal("zsh snippet must run the inline caption form at the prompt")
+	}
 }

@@ -22,6 +22,9 @@ func TestLoadCreatesDefaultFile(t *testing.T) {
 	if !cfg.OutputIncluded() {
 		t.Fatal("include_output should default to true")
 	}
+	if !cfg.PopupInline() {
+		t.Fatal("popup inline should default to true")
+	}
 	if cfg.Popup.WidthCells != 100 || cfg.Popup.HeightCells != 30 {
 		t.Fatalf("cells = %dx%d, want 100x30", cfg.Popup.WidthCells, cfg.Popup.HeightCells)
 	}
@@ -73,6 +76,20 @@ func TestCaptureIncludeOutputExplicitFalsePreserved(t *testing.T) {
 	}
 	if cfg.OutputIncluded() {
 		t.Fatal("explicit include_output = false must be preserved, not reset to default")
+	}
+}
+
+func TestPopupInlineExplicitFalsePreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[popup]\ninline = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.PopupInline() {
+		t.Fatal("explicit inline = false must be preserved, not reset to default")
 	}
 }
 

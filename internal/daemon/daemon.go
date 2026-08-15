@@ -527,10 +527,14 @@ func (d *Daemon) captureCode(s *Session) {
 		blog.Entry{Kind: blog.KindCode, CodeText: res.Text})
 }
 
-// captureNote runs the Alt+3 flow: spawn the floating note popup, which
-// collects the text and appends it to blog.md itself. There is no fallback
-// entry — the note text only exists inside the popup.
+// captureNote runs the Alt+3 flow: stage the note for inline captioning
+// at the next prompt, or spawn the floating note popup when inline is
+// disabled. The form collects the text and appends it to blog.md itself;
+// there is no fallback entry — the note text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
+	if d.stageCapture(popup.ModeNote, "", s.Dir) {
+		return
+	}
 	if err := d.spawnPopup(popup.ModeNote, "", s.Dir); err != nil {
 		d.logger.Printf("capture note: %v", err)
 		_ = notify.Send("snapshell", err.Error())
@@ -551,13 +555,17 @@ func (d *Daemon) spawnPopup(mode, file, sessionDir string) error {
 		term, d.cfg.Popup.WidthCells, d.cfg.Popup.HeightCells)
 }
 
-// appendWithPopup is the shared tail of the image/code flows: spawn the
-// popup to collect a caption and append the entry. The popup writes the
-// entry (with or without caption) to blog.md itself. If the popup can't
+// appendWithPopup is the shared tail of the image/code flows: stage the
+// capture for an inline caption, or spawn the popup to collect a caption
+// and append the entry. In the spawned-window path the popup writes the
+// entry (with or without caption) to blog.md itself; if the popup can't
 // spawn, the capture is still appended without a caption — losing an
 // already-taken screenshot or capture because the caption window failed
 // would be a worse outcome.
 func (d *Daemon) appendWithPopup(s *Session, mode, file string, fallback blog.Entry) {
+	if d.stageCapture(mode, file, s.Dir) {
+		return
+	}
 	if err := d.spawnPopup(mode, file, s.Dir); err != nil {
 		d.logger.Printf("capture %s: spawn popup: %v", mode, err)
 		_ = notify.Send("snapshell", err.Error())
@@ -567,6 +575,24 @@ func (d *Daemon) appendWithPopup(s *Session, mode, file string, fallback blog.En
 		return
 	}
 	d.logger.Printf("capture %s popup spawned", mode)
+}
+
+// stageCapture writes a pending-capture request so the shell hook can run
+// the caption form inline at the user's next shell prompt (fzf-style, no
+// new window). Returns true when the capture was staged; the caller then
+// stops — the form itself appends the finished entry to blog.md.
+func (d *Daemon) stageCapture(mode, file, sessionDir string) bool {
+	if !d.cfg.PopupInline() {
+		return false
+	}
+	if err := WritePending(PendingCapture{Mode: mode, File: file, SessionDir: sessionDir}); err != nil {
+		d.logger.Printf("capture %s: stage inline caption: %v", mode, err)
+		_ = notify.Send("snapshell", "failed to stage inline caption: "+err.Error())
+		return false
+	}
+	d.logger.Printf("capture %s staged for inline caption at next shell prompt", mode)
+	_ = notify.Send("snapshell", "captured — caption prompt will appear at your next shell prompt")
+	return true
 }
 
 // selfExe returns the running daemon's own binary path, which the popup

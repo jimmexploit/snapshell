@@ -38,11 +38,16 @@ type CaptureConfig struct {
 	IncludeOutput *bool `toml:"include_output"`
 }
 
-// PopupConfig configures the floating caption window.
+// PopupConfig configures the caption prompt.
 type PopupConfig struct {
 	Terminal    string `toml:"terminal"`
 	WidthCells  int    `toml:"width_cells"`
 	HeightCells int    `toml:"height_cells"`
+	// Inline runs the caption form inline at the user's next shell prompt
+	// (fzf-style, via the shell hook) instead of spawning a floating
+	// terminal window. A *bool so an explicit `inline = false` in the file
+	// is preserved. The spawned-window path remains as the fallback.
+	Inline *bool `toml:"inline"`
 }
 
 // PathsConfig configures where session folders live.
@@ -55,10 +60,11 @@ type PathsConfig struct {
 // file-based configs).
 func Default() *Config {
 	includeOutput := true
+	inline := true
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
 		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
-		Popup:      PopupConfig{Terminal: "alacritty", WidthCells: 100, HeightCells: 30},
+		Popup:      PopupConfig{Terminal: "alacritty", WidthCells: 100, HeightCells: 30, Inline: &inline},
 		Paths:      PathsConfig{SessionRoot: "~/snapshell"},
 	}
 }
@@ -67,6 +73,12 @@ func Default() *Config {
 // output (default true).
 func (c *Config) OutputIncluded() bool {
 	return c.Capture.IncludeOutput != nil && *c.Capture.IncludeOutput
+}
+
+// PopupInline reports whether captions should be collected inline at the
+// next shell prompt (default true) rather than in a floating window.
+func (c *Config) PopupInline() bool {
+	return c.Popup.Inline != nil && *c.Popup.Inline
 }
 
 // TerminalFallbacks lists popup terminal emulators tried in order when the
@@ -161,6 +173,10 @@ const defaultFileText = `# snapshell configuration
   terminal = "alacritty"
   width_cells = 100
   height_cells = 30
+  # true = the caption form appears inline at your next shell prompt
+  # (fzf-style, no extra window). false = spawn a floating terminal window
+  # instead.
+  inline = true
 
 [capture]
   # false = Alt+2 captures only the command line (and its prompt lines),
@@ -188,6 +204,9 @@ func fillDefaults(c *Config) {
 	}
 	if c.Popup.HeightCells <= 0 {
 		c.Popup.HeightCells = def.Popup.HeightCells
+	}
+	if c.Popup.Inline == nil {
+		c.Popup.Inline = def.Popup.Inline
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot

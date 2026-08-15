@@ -38,13 +38,13 @@ independently; a checkmark means done and verified.
       --`; xfce4-terminal `-x`; konsole `--separate`). The generated
       `config.toml` now documents how to set `[popup].terminal`.
 
-- [ ] **6. fzf-like inline popup (no new window / no taskbar entry)** — the
-      current popup spawns a brand-new terminal window (heavyweight,
-      appears in the running-apps bar). Make the caption prompt run inline
-      in the user's existing terminal, like fzf: the shell hook detects a
-      pending capture request at each prompt and runs the form in-place.
-      Keep the spawned-window path as a fallback when there's no shell
-      hook / terminal context to inject into.
+- [x] **6. fzf-like inline popup (no new window / no taskbar entry)** —
+      captions now run inline at the user's next shell prompt: the daemon
+      stages a pending capture (`~/.local/state/snapshell/pending.json`)
+      and the shell hook runs `snapshell internal-popup-inline` at each
+      prompt, which shows the form in-place and appends the entry. No
+      extra window, no taskbar entry. The spawned-window path remains as
+      the `[popup] inline = false` fallback (default is `true`).
 
 - [ ] **7. Plain-shell (no tmux) support** — Alt+2 currently no-ops
       without tmux. For users who don't use tmux: fall back to capturing

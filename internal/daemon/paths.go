@@ -22,3 +22,8 @@ func LogPath() string    { return filepath.Join(StateDir(), "daemon.log") }
 // MarkersDir returns the directory holding per-pane row marker files
 // written by the shell hook.
 func MarkersDir() string { return filepath.Join(StateDir(), "markers") }
+
+// PendingPath returns the path of the pending-capture request file the
+// daemon writes so the shell hook can pick it up at the next prompt and
+// run the caption form inline.
+func PendingPath() string { return filepath.Join(StateDir(), "pending.json") }
