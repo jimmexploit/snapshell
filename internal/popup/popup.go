@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 
 	"snapshell/internal/blog"
 )
@@ -72,7 +73,9 @@ func Run(mode, file, sessionDir string) error {
 	km := huh.NewDefaultKeyMap()
 	km.Quit = key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "cancel"))
 
-	form := huh.NewForm(group...).WithKeyMap(km)
+	form := huh.NewForm(group...).
+		WithKeyMap(km).
+		WithTheme(frameTheme(mode))
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			// Esc/close: image/code still record the capture (no caption);
@@ -115,6 +118,19 @@ func appendResult(mode, caption, file, sessionDir string) error {
 // caption field.
 func previewNote(desc string) *huh.Note {
 	return huh.NewNote().Title("Preview").Description(desc)
+}
+
+// frameTheme styles the popup so it reads as a distinct framed window
+// instead of blending into whatever is behind it: a thin rounded border
+// drawn around the entire form. The border is applied to the form's base
+// style, which huh wraps the whole form view in.
+func frameTheme(mode string) *huh.Theme {
+	theme := huh.ThemeCharm()
+	theme.Form.Base = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("245")).
+		Padding(0, 1, 1, 1)
+	return theme
 }
 
 // describeImage renders the image-mode preview label, including pixel

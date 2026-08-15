@@ -36,9 +36,9 @@ func Spawn(selfBin, mode, file, sessionDir, term string, widthCells, heightCells
 
 	args := []string{}
 	if term == "alacritty" || term == "kitty" {
-		args = append(args, "--class", "snapshell-popup")
+		args = append(args, "--class", "snapshell-popup", "--title", "snapshell")
 	} else if term == "xterm" {
-		args = append(args, "-name", "snapshell-popup")
+		args = append(args, "-name", "snapshell-popup", "-T", "snapshell")
 	}
 	args = append(args, dimensionsFlags(term, widthCells, heightCells)...)
 	args = append(args, "-e", selfBin, "internal-popup",
