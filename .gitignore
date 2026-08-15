@@ -1,0 +1,7 @@
+# Build artifacts
+/bin/
+/snapshell
+
+# Editor/OS cruft
+*.swp
+.DS_Store

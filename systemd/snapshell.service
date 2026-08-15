@@ -1,0 +1,35 @@
+# snapshell user service — run the background daemon under systemd
+#
+# Install the binary somewhere on PATH first, e.g.:
+#   go install ./cmd/snapshell
+# (the unit below assumes ~/go/bin/snapshell; adjust %h/go/bin/ if you
+# install elsewhere).
+#
+# Then install and enable this unit:
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/snapshell.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now snapshell
+#
+# The daemon needs the graphical session's DISPLAY/XAUTHORITY to grab
+# Alt+1/2/3, so it runs as the logged-in user under MATE — do NOT make
+# this a system-wide (root) unit.
+#
+# To see logs:
+#   journalctl --user -u snapshell -f
+[Unit]
+Description=snapshell background daemon (HTB session capture hotkeys)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/go/bin/snapshell daemon start
+Restart=on-failure
+RestartSec=2
+
+# Only run under the user's graphical session.
+ConditionUser=!root
+
+[Install]
+WantedBy=default.target
