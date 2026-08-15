@@ -47,6 +47,7 @@ func newShellhookCmd() *cobra.Command {
 func newMarkCmd() *cobra.Command {
 	var pane string
 	var phase string
+	var prevEnd string
 
 	cmd := &cobra.Command{
 		Use:   "mark",
@@ -55,12 +56,18 @@ func newMarkCmd() *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			// Silent on failure: this runs on every command prompt and
 			// must not spam the terminal when tmux isn't available.
-			_ = shellhook.Mark(pane, phase)
+			// The end phase prints the recorded row so the shell hook can
+			// stash it and feed it back as the next command's --prev-end.
+			row, err := shellhook.Mark(pane, phase, prevEnd)
+			if err == nil && phase == "end" && row >= 0 {
+				fmt.Printf("%d\n", row)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&pane, "pane", "", "tmux pane id (TMUX_PANE)")
 	cmd.Flags().StringVar(&phase, "phase", "", "marker phase: start or end")
+	cmd.Flags().StringVar(&prevEnd, "prev-end", "", "end row of the previous command (the row the current prompt started on); empty when unknown")
 	_ = cmd.MarkFlagRequired("pane")
 	_ = cmd.MarkFlagRequired("phase")
 

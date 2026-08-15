@@ -505,7 +505,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 // captureCode runs the Alt+2 flow: focused tmux pane → last command's text
 // → popup caption → entry appended to blog.md.
 func (d *Daemon) captureCode(s *Session) {
-	res, err := tmuxcap.Capture(d.markersDir)
+	res, err := tmuxcap.Capture(d.markersDir, d.cfg.OutputIncluded())
 	if err != nil {
 		d.logger.Printf("capture tmux: %v", err)
 		_ = notify.Send("snapshell", err.Error())

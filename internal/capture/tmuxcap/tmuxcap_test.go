@@ -91,13 +91,13 @@ func writeMarker(t *testing.T, dir, pane, content string) {
 
 func TestCaptureFullRange(t *testing.T) {
 	md, argsFile := setUp(t, "3")
-	writeMarker(t, md, "%0", "10\n15\n")
+	writeMarker(t, md, "%0", "9\n10\n15\n") // prev=9, start=10, end=15
 
-	res, err := Capture(md)
+	res, err := Capture(md, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	// Marker rows are absolute; hs=3. Capture range = [start-1-hs .. end-1-hs]
+	// hs=3. From = prev (9) .. to = end-1 (14) → screen rows [9-3 .. 14-3]
 	// = [6 .. 11].
 	want := "row 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\n"
 	if res.Text != want {
@@ -114,13 +114,13 @@ func TestCaptureNegativeRangeIntoHistory(t *testing.T) {
 	// Scrolled output: marker rows far above the current visible top
 	// (hs huge) must produce negative capture-pane rows.
 	md, argsFile := setUp(t, "200")
-	writeMarker(t, md, "%0", "30\n42\n")
+	writeMarker(t, md, "%0", "29\n30\n42\n")
 
-	res, err := Capture(md)
+	res, err := Capture(md, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	// range = [30-1-200 .. 42-1-200] = [-171 .. -159]
+	// range = [29-200 .. 42-1-200] = [-171 .. -159]
 	want := ""
 	for n := -171; n <= -159; n++ {
 		want += "row " + strconv.Itoa(n) + "\n"
@@ -136,13 +136,13 @@ func TestCaptureNegativeRangeIntoHistory(t *testing.T) {
 
 func TestCaptureNoOutputCollapsesToPromptLine(t *testing.T) {
 	md, argsFile := setUp(t, "0")
-	writeMarker(t, md, "%0", "5\n5\n") // no output: start == end
+	writeMarker(t, md, "%0", "4\n5\n5\n") // no output: start == end
 
-	res, err := Capture(md)
+	res, err := Capture(md, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	if res.Text != "row 4\n" { // [start-1-hs .. end-1-hs] = [4 .. 4]
+	if res.Text != "row 4\n" { // [prev .. end-1] = [4 .. 4]
 		t.Fatalf("Text = %q, want %q", res.Text, "row 4\n")
 	}
 	args, _ := os.ReadFile(argsFile)
@@ -151,9 +151,65 @@ func TestCaptureNoOutputCollapsesToPromptLine(t *testing.T) {
 	}
 }
 
+func TestCaptureTwoLinePromptIncludesBothLines(t *testing.T) {
+	// Two-line PS1: prompt starts at row 7 (line A), command on row 8
+	// (line B), first output row 9, end 14. prev=7 captures line A too.
+	md, argsFile := setUp(t, "0")
+	writeMarker(t, md, "%0", "7\n9\n14\n")
+
+	res, err := Capture(md, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "row 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\n" {
+		t.Fatalf("Text = %q, want rows 7..13", res.Text)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-S 7 -E 13") {
+		t.Fatalf("capture-pane args = %q, want -S 7 -E 13", args)
+	}
+}
+
+func TestCaptureCommandOnlyStopsAtCommandLine(t *testing.T) {
+	// includeOutput=false: capture prompt lines + command, not output.
+	md, argsFile := setUp(t, "0")
+	writeMarker(t, md, "%0", "7\n9\n14\n")
+
+	res, err := Capture(md, false)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "row 7\nrow 8\n" { // [prev .. start-1] = [7 .. 8]
+		t.Fatalf("Text = %q, want %q", res.Text, "row 7\nrow 8\n")
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-S 7 -E 8") {
+		t.Fatalf("capture-pane args = %q, want -S 7 -E 8", args)
+	}
+}
+
+func TestCaptureCommandOnlyLegacyMarkerFallsBackToCommandLine(t *testing.T) {
+	// Legacy 2-row marker (no prev row): command-only falls back to
+	// start-1, the row the command was typed on.
+	md, argsFile := setUp(t, "0")
+	writeMarker(t, md, "%0", "9\n14\n")
+
+	res, err := Capture(md, false)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "row 8\n" { // [start-1 .. start-1] = [8 .. 8]
+		t.Fatalf("Text = %q, want %q", res.Text, "row 8\n")
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-S 8 -E 8") {
+		t.Fatalf("capture-pane args = %q, want -S 8 -E 8", args)
+	}
+}
+
 func TestCaptureMissingMarkerIsActionable(t *testing.T) {
 	md, _ := setUp(t, "0")
-	_, err := Capture(md)
+	_, err := Capture(md, true)
 	if err == nil {
 		t.Fatal("expected error for missing marker")
 	}
@@ -165,7 +221,7 @@ func TestCaptureMissingMarkerIsActionable(t *testing.T) {
 func TestCaptureDegenerateMarker(t *testing.T) {
 	md, _ := setUp(t, "0")
 	writeMarker(t, md, "%0", "3\n2\n") // end < start
-	if _, err := Capture(md); err == nil {
+	if _, err := Capture(md, true); err == nil {
 		t.Fatal("degenerate marker should error")
 	}
 }
@@ -182,7 +238,7 @@ func TestFocusedPaneMissingTmux(t *testing.T) {
 func TestCaptureNotInTmux(t *testing.T) {
 	md, _ := setUp(t, "0")
 	t.Setenv("TMUXCAP_NOTMUX", "1")
-	_, err := Capture(md)
+	_, err := Capture(md, true)
 	if err == nil {
 		t.Fatal("not-in-tmux should error")
 	}

@@ -41,32 +41,68 @@ func setUp(t *testing.T, pos string) (stateFile string) {
 
 func TestMarkStartAndEnd(t *testing.T) {
 	stateFile := setUp(t, "0 5") // abs start = 5
-	if err := Mark("%1", "start"); err != nil {
+	if _, err := Mark("%1", "start", ""); err != nil {
 		t.Fatalf("Mark start: %v", err)
 	}
 	path := filepath.Join(markersDir(), "%1.last")
 	data, _ := os.ReadFile(path)
-	if string(data) != "5\n" {
-		t.Fatalf("start marker = %q, want %q", data, "5\n")
+	if string(data) != "-1\n5\n-1\n" {
+		t.Fatalf("start marker = %q, want %q", data, "-1\n5\n-1\n")
 	}
 
 	// Change the reported position: history_size=2, cursor_y=7 → abs end=9.
 	if err := os.WriteFile(stateFile, []byte("2 7"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := Mark("%1", "end"); err != nil {
+	row, err := Mark("%1", "end", "")
+	if err != nil {
 		t.Fatalf("Mark end: %v", err)
 	}
+	if row != 9 {
+		t.Fatalf("Mark end row = %d, want 9", row)
+	}
 	data, _ = os.ReadFile(path)
-	if string(data) != "5\n9\n" {
-		t.Fatalf("end marker = %q, want %q", data, "5\n9\n")
+	if string(data) != "-1\n5\n9\n" {
+		t.Fatalf("end marker = %q, want %q", data, "-1\n5\n9\n")
+	}
+}
+
+func TestMarkStartWithPrevEnd(t *testing.T) {
+	setUp(t, "0 5")
+	if _, err := Mark("%2", "start", "3"); err != nil {
+		t.Fatalf("Mark start with prev-end: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(markersDir(), "%2.last"))
+	if string(data) != "3\n5\n-1\n" {
+		t.Fatalf("start marker = %q, want %q", data, "3\n5\n-1\n")
+	}
+}
+
+func TestMarkEndPreservesPrevEnd(t *testing.T) {
+	stateFile := setUp(t, "0 5")
+	if _, err := Mark("%1", "start", "3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("2 7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%1", "end", ""); err != nil {
+		t.Fatalf("Mark end: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(markersDir(), "%1.last"))
+	if string(data) != "3\n5\n9\n" {
+		t.Fatalf("end marker = %q, want %q", data, "3\n5\n9\n")
 	}
 }
 
 func TestMarkEndWithoutStartIsNoop(t *testing.T) {
 	setUp(t, "2 7")
-	if err := Mark("%9", "end"); err != nil {
+	row, err := Mark("%9", "end", "")
+	if err != nil {
 		t.Fatalf("Mark end with no start should be a no-op, got %v", err)
+	}
+	if row != -1 {
+		t.Fatalf("no-op end should return -1, got %d", row)
 	}
 	if _, err := os.Stat(filepath.Join(markersDir(), "%9.last")); !os.IsNotExist(err) {
 		t.Fatal("no marker file should be created without a start")
@@ -75,14 +111,14 @@ func TestMarkEndWithoutStartIsNoop(t *testing.T) {
 
 func TestMarkBadPhase(t *testing.T) {
 	setUp(t, "0 5")
-	if err := Mark("%1", "middle"); err == nil {
+	if _, err := Mark("%1", "middle", ""); err == nil {
 		t.Fatal("bad phase should error")
 	}
 }
 
 func TestMarkMissingTmux(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // empty
-	if err := Mark("%1", "start"); err == nil {
+	if _, err := Mark("%1", "start", ""); err == nil {
 		t.Fatal("missing tmux should error")
 	}
 }

@@ -15,46 +15,61 @@ import (
 // it at a temp dir.
 var markersDir = daemon.MarkersDir
 
-// Mark records the current absolute tmux row for a pane into its marker
-// file. phase is "start" or "end".
+// Mark records tmux row positions for a pane into its marker file and
+// returns the recorded absolute row.
 //
-// The row is computed as history_size + cursor_y, NOT cursor_y alone. tmux's
-// cursor_y is relative to the visible screen and stops being valid once the
-// command's output scrolls the prompt into history; the absolute row keeps
-// the marker correct regardless of how much the pane scrolled.
+// The marker file holds three absolute rows (history_size + cursor_y):
 //
-// Expected failures (tmux not running, pane gone, no prior start row) return
-// an error so callers can decide; the shell hook snippet ignores them so a
-// broken hook never spams the prompt.
-func Mark(pane, phase string) error {
+//	<prev_end>   row where the current prompt started (the previous
+//	             command's end row); -1 when unknown (first command)
+//	<start>      row after the prompt + command line
+//	<end>        row where the next prompt will start
+//
+// prevEnd is passed from the shell hook's previous mark end (see the
+// snippet); an empty string means "unknown" and is stored as -1. tmuxcap
+// uses prev_end as the start of the capture window so multi-line prompts
+// are captured in full, not just the command line.
+//
+// phase "start" writes [prev, row, -1]. phase "end" preserves prev/start,
+// writes [prev, start, row], and the returned row is what the shell hook
+// feeds back as the next prev_end.
+//
+// Expected failures (tmux not running, pane gone, no prior start row)
+// return an error; the shell hook snippet ignores them so a broken hook
+// never spams the prompt.
+func Mark(pane, phase, prevEnd string) (int, error) {
 	if pane == "" {
-		return fmt.Errorf("mark: empty pane id")
+		return 0, fmt.Errorf("mark: empty pane id")
 	}
 
 	abs, err := tmuxCursorAbs(pane)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	dir := markersDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return 0, err
 	}
 	path := filepath.Join(dir, pane+".last")
 
 	switch phase {
 	case "start":
-		return writeAtomic(path, fmt.Sprintf("%d\n", abs))
-	case "end":
-		start, err := readStartRow(path)
-		if err != nil {
-			// No recorded start (first prompt, or an empty command in bash
-			// whose hook skipped phase start). Nothing to complete.
-			return nil
+		prev := -1
+		if n, err := strconv.Atoi(strings.TrimSpace(prevEnd)); err == nil {
+			prev = n
 		}
-		return writeAtomic(path, fmt.Sprintf("%d\n%d\n", start, abs))
+		return abs, writeAtomic(path, fmt.Sprintf("%d\n%d\n%d\n", prev, abs, -1))
+	case "end":
+		prev, start, _, err := readMarkerFile(path)
+		if err != nil {
+			// No recorded start (first prompt, or an empty command whose
+			// hook skipped phase start). Nothing to complete.
+			return -1, nil
+		}
+		return abs, writeAtomic(path, fmt.Sprintf("%d\n%d\n%d\n", prev, start, abs))
 	default:
-		return fmt.Errorf("mark: phase must be start or end, got %q", phase)
+		return 0, fmt.Errorf("mark: phase must be start or end, got %q", phase)
 	}
 }
 
@@ -85,21 +100,35 @@ func tmuxCursorAbs(pane string) (int, error) {
 	return hs + cy, nil
 }
 
-// readStartRow returns the first line (start row) of the marker file.
-func readStartRow(path string) (int, error) {
+// readMarkerFile returns (prev, start, end) from a marker file. It accepts
+// the 3-row format as well as legacy 1-row (start) and 2-row (start, end)
+// files; missing rows become -1.
+func readMarkerFile(path string) (prev, start, end int, err error) {
+	prev, start, end = -1, -1, -1
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
-	line := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
-	if line == "" {
-		return 0, fmt.Errorf("marker has no start row")
+	rows := strings.Split(strings.TrimSpace(string(data)), "\n")
+	vals := []int{}
+	for _, line := range rows {
+		n, e := strconv.Atoi(strings.TrimSpace(line))
+		if e != nil {
+			return 0, 0, 0, fmt.Errorf("bad marker row %q", line)
+		}
+		vals = append(vals, n)
 	}
-	row, err := strconv.Atoi(line)
-	if err != nil {
-		return 0, fmt.Errorf("bad start row %q", line)
+	switch len(vals) {
+	case 1:
+		start = vals[0]
+	case 2:
+		start, end = vals[0], vals[1]
+	case 3:
+		prev, start, end = vals[0], vals[1], vals[2]
+	default:
+		return 0, 0, 0, fmt.Errorf("marker has %d rows, want 1-3", len(vals))
 	}
-	return row, nil
+	return prev, start, end, nil
 }
 
 // writeAtomic writes the marker file via a temp file + rename so a reader

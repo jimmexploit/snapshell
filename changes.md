@@ -8,26 +8,25 @@ independently; a checkmark means done and verified.
       subtle frame/title) so the popup reads as a distinct window. Pure
       TUI styling, no new dependencies.
 
-- [ ] **2. `start --verbose` live documentation** — a verbose mode that
+- [x] **2. `start --verbose` live documentation** — a verbose mode that
       stays attached and documents the session in real time with colored
       lines per capture (screenshot / code / note + filename), instead of
       the current silent return. Ctrl+C detaches without stopping the
       session.
 
-- [ ] **3. Auto-launch the daemon from `start <name>`** — drop the
+- [x] **3. Auto-launch the daemon from `start <name>`** — drop the
       two-step "daemon start, then start box". `snapshell start` should
       detect a dead daemon and spawn it in the background itself, then
       proceed. (Also apply to `status`/`stop` for convenience.)
 
-- [ ] **4. Two-line PS1 + capture-scope config** — tmux command capture
-      currently assumes a single-line prompt; a two-line PS1 (e.g.
-      powerline) can cut the command line. Fix the start-row calculation to
-      include the full prompt/command. Add a `[capture]` config section the
-      user can choose from:
-      - `include_output = true` (default): current behavior — command line
-        + full output.
-      - `include_output = false`: capture only the command line, skip
-        output (some users want just the command, no noise).
+- [x] **4. Two-line PS1 + capture-scope config** — tmux command capture
+      now includes the full (possibly multi-line) prompt: the marker file
+      holds a third row (`prev_end` = where the current prompt started),
+      threaded through the shell hook's `--prev-end`/captured-output
+      dance. A `[capture]` config section lets the user choose scope:
+      - `include_output = true` (default): prompt + command + full output.
+      - `include_output = false`: only the prompt + command line(s), no
+        output noise.
 
 - [ ] **5. Wider popup terminal support** — the popup terminal resolution
       only knows alacritty/kitty/xterm. The user may run mate-terminal,

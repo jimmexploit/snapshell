@@ -16,8 +16,8 @@ import (
 const BashSnippet = `# --- snapshell shell integration ---
 # add this near the end of your .bashrc, then start a NEW shell/tmux pane
 if [ -n "$TMUX" ] && command -v snapshell >/dev/null 2>&1; then
-  _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start; }
-  _snapshell_mark_end()   { snapshell shellhook mark --pane "$TMUX_PANE" --phase end; }
+  _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
+  _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell shellhook mark --pane "$TMUX_PANE" --phase end)"; }
 
   _snapshell_preexec() {
     # Record the start row only once per command line; later DEBUG events
@@ -78,8 +78,8 @@ const ZshSnippet = `# --- snapshell shell integration ---
 # add this near the end of your .zshrc, then start a NEW shell/tmux pane
 if [ -n "$TMUX" ] && (( $+commands[snapshell] )); then
   autoload -Uz add-zsh-hook
-  _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start; }
-  _snapshell_mark_end()   { snapshell shellhook mark --pane "$TMUX_PANE" --phase end; }
+  _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
+  _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell shellhook mark --pane "$TMUX_PANE" --phase end)"; }
   add-zsh-hook preexec _snapshell_mark_start
   add-zsh-hook precmd  _snapshell_mark_end
 fi

@@ -19,6 +19,9 @@ func TestLoadCreatesDefaultFile(t *testing.T) {
 	if cfg.Popup.Terminal != "alacritty" {
 		t.Fatalf("terminal = %q, want alacritty", cfg.Popup.Terminal)
 	}
+	if !cfg.OutputIncluded() {
+		t.Fatal("include_output should default to true")
+	}
 	if cfg.Popup.WidthCells != 100 || cfg.Popup.HeightCells != 30 {
 		t.Fatalf("cells = %dx%d, want 100x30", cfg.Popup.WidthCells, cfg.Popup.HeightCells)
 	}
@@ -51,8 +54,25 @@ func TestLoadPartialFillsDefaults(t *testing.T) {
 	if cfg.Screenshot.Tool != "flameshot" {
 		t.Fatalf("tool = %q, want default flameshot", cfg.Screenshot.Tool)
 	}
+	if !cfg.OutputIncluded() {
+		t.Fatal("include_output should default to true when the key is missing")
+	}
 	if cfg.Popup.WidthCells != 100 {
 		t.Fatalf("width_cells = %d, want default 100", cfg.Popup.WidthCells)
+	}
+}
+
+func TestCaptureIncludeOutputExplicitFalsePreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[capture]\ninclude_output = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.OutputIncluded() {
+		t.Fatal("explicit include_output = false must be preserved, not reset to default")
 	}
 }
 

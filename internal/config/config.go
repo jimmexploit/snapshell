@@ -18,6 +18,7 @@ import (
 // in with defaults by Load.
 type Config struct {
 	Screenshot ScreenshotConfig `toml:"screenshot"`
+	Capture    CaptureConfig    `toml:"capture"`
 	Popup      PopupConfig      `toml:"popup"`
 	Paths      PathsConfig      `toml:"paths"`
 }
@@ -25,6 +26,16 @@ type Config struct {
 // ScreenshotConfig configures the Alt+1 capture tool.
 type ScreenshotConfig struct {
 	Tool string `toml:"tool"`
+}
+
+// CaptureConfig configures the Alt+2 tmux capture scope.
+type CaptureConfig struct {
+	// IncludeOutput captures the command's full output alongside the
+	// prompt+command lines; when false only the prompt+command line(s) are
+	// kept. A *bool (not bool) so an explicit `include_output = false` in
+	// the config file is preserved instead of being indistinguishable from
+	// a missing key.
+	IncludeOutput *bool `toml:"include_output"`
 }
 
 // PopupConfig configures the floating caption window.
@@ -43,11 +54,19 @@ type PathsConfig struct {
 // "~/snapshell" here; callers must expand it (Load expands it for
 // file-based configs).
 func Default() *Config {
+	includeOutput := true
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
+		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
 		Popup:      PopupConfig{Terminal: "alacritty", WidthCells: 100, HeightCells: 30},
 		Paths:      PathsConfig{SessionRoot: "~/snapshell"},
 	}
+}
+
+// OutputIncluded reports whether Alt+2 should capture the command's full
+// output (default true).
+func (c *Config) OutputIncluded() bool {
+	return c.Capture.IncludeOutput != nil && *c.Capture.IncludeOutput
 }
 
 // ConfigPath returns the default config file location.
@@ -122,6 +141,9 @@ func fillDefaults(c *Config) {
 	def := Default()
 	if strings.TrimSpace(c.Screenshot.Tool) == "" {
 		c.Screenshot.Tool = def.Screenshot.Tool
+	}
+	if c.Capture.IncludeOutput == nil {
+		c.Capture.IncludeOutput = def.Capture.IncludeOutput
 	}
 	if strings.TrimSpace(c.Popup.Terminal) == "" {
 		c.Popup.Terminal = def.Popup.Terminal
