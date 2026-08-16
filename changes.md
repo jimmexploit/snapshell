@@ -114,3 +114,48 @@ independently; a checkmark means done and verified.
       prints a `[2/3] Shell hook:` header before its question (it
       previously jumped straight from `[1/3]` to `[3/3]`, looking like the
       step was missing) and confirms when the hook is skipped.
+
+- [x] **13. Global command recording + per-session history** — every
+      completed command now lands in the active session's command history
+      at `<session_root>/logs/<name>/commands.history`, one line per
+      command:
+      ```
+      2026-08-16 11:16:57  %1        echo first_command
+      2026-08-16 11:17:15  /dev/pts/2  whoami
+      ```
+      The shell hook records from EVERY shell, not just tmux: tmux panes
+      pass `--source "$TMUX_PANE"` (plus their existing row markers for
+      Alt+2), and plain terminals (a new kitty tab/window, any tty) pass
+      `--source "$(tty)"` via `_hook-record`, which also keeps the
+      `lastcommand` plain-shell fallback working. Newlines in a command are
+      collapsed to spaces so each record is exactly one line. No session
+      active → only `lastcommand` is written, no history file is created.
+      Also fixed: the bash DEBUG trap no longer records the hook's own
+      `.bashrc` sourcing lines (`unset _snapshell_old_debug ...`) as fake
+      commands — a `_snapshell_sourcing` flag makes the trap a no-op while
+      the rc file is being sourced.
+
+- [x] **14. Unified command log — Alt+2 captures the last command
+      anywhere** — the earlier split meant Alt+2 in a plain kitty tab
+      still read the *tmux* row log and captured the last tmux command
+      instead of the command just typed in the terminal. Now the active
+      session's `commands.log` is unified: tmux records stay row-based
+      (`%N <prev> <start> <end>`, captured via tmux) and plain-terminal
+      records are appended as text (`tty <source> <command text...>`).
+      `tmuxcap` dispatches on the last line's first field — `%` → tmux
+      capture, `tty` → return the command text verbatim (no tmux needed) —
+      so Alt+2 always captures the most recently completed command no
+      matter which shell it was typed in. Command text recording moved to
+      the end phase (after the command completes), matching the tmux row
+      semantics.
+- [x] **15. Alt+2 output for plain kitty terminals** — previously a command
+      typed in a kitty tab (no tmux) was captured as text only, with no
+      output. Now the shell hook enables kitty's shell integration (OSC 133
+      prompt/command marks) in plain kitty shells, records the command with
+      its kitty window id + listen socket, and the record type becomes
+      `ktty <source> <kittywid> <listen> <command text...>`. Alt+2 reads
+      the output back from that window with `kitty @ --to <listen> get-text
+      --match id:<kittywid> --extent last_cmd_output` and appends command +
+      output. Degrades cleanly: missing `kitty`, a dead socket/window, or a
+      window whose shell predates the hook all fall back to the command text
+      (with an actionable error when kitty itself is the problem).

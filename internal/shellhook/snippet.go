@@ -18,18 +18,30 @@ import (
 const BashSnippet = `# --- snapshell shell integration ---
 # add this near the end of your .bashrc, then start a NEW shell/tmux pane
 if command -v snapshell >/dev/null 2>&1; then
+  _snapshell_sourcing=1
   if [ -n "$TMUX" ]; then
-    # Inside tmux: record row markers for full prompt+output capture.
-    _snapshell_mark_start() { snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
-    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; }
+    # Inside tmux: record row markers for full prompt+output capture, and
+    # the command text (at end, once it completed) for the session history.
+    _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
+    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; snapshell _hook-record --source "$TMUX_PANE" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT; }
   else
-    # No tmux: no row markers — record the command text so Alt+2 can still
-    # capture the command line (without output).
-    _snapshell_mark_start() { snapshell _hook-record --text "$1"; }
-    _snapshell_mark_end()   { :; }
+    # No tmux: plain terminal. Inside kitty, enable kitty's shell
+    # integration (prompt marks) so Alt+2 can read the command's output
+    # back from the window's scrollback; the window id + listen socket are
+    # recorded with the command text for that lookup.
+    if [ -n "${KITTY_WINDOW_ID:-}" ] && [ -z "${KITTY_SHELL_INTEGRATION:-}" ] && [ -r /usr/lib/kitty/shell-integration/bash/kitty.bash ]; then
+      export KITTY_SHELL_INTEGRATION=enabled
+      source /usr/lib/kitty/shell-integration/bash/kitty.bash
+    fi
+    _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; _SNAPSHELL_KITTY_WID="${KITTY_WINDOW_ID:-}"; _SNAPSHELL_KITTY_LISTEN="${KITTY_LISTEN_ON:-}"; }
+    _snapshell_mark_end()   { snapshell _hook-record --source "$(tty 2>/dev/null)" --kitty-window "${_SNAPSHELL_KITTY_WID:-}" --kitty-listen "${_SNAPSHELL_KITTY_LISTEN:-}" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT _SNAPSHELL_KITTY_WID _SNAPSHELL_KITTY_LISTEN; }
   fi
 
   _snapshell_preexec() {
+    # While .bashrc is still being sourced, the DEBUG trap fires on the
+    # hook's own setup lines (e.g. 'unset _snapshell_old_debug ...') — those
+    # must never be recorded as user commands.
+    [ -n "${_snapshell_sourcing:-}" ] && return 0
     # Record the start row once per command line; later DEBUG events inside
     # compound commands must not overwrite it with a later row.
     [ -n "${_SNAPSHELL_STARTED:-}" ] && return 0
@@ -50,6 +62,7 @@ if command -v snapshell >/dev/null 2>&1; then
   else
     # Standalone: DEBUG trap (chained onto any existing one) + PROMPT_COMMAND.
     _snapshell_debug_chain() {
+      [ -n "${_snapshell_sourcing:-}" ] && return 0
       [ -z "$COMP_LINE" ] || return 0
       case "$BASH_COMMAND" in
         ""|:|_snapshell_*|__bp_*|builtin\ *) return 0 ;;
@@ -79,6 +92,7 @@ if command -v snapshell >/dev/null 2>&1; then
       PROMPT_COMMAND="_snapshell_precmd_end"
     fi
   fi
+  unset _snapshell_sourcing
 fi
 `
 
@@ -90,11 +104,15 @@ const ZshSnippet = `# --- snapshell shell integration ---
 if (( $+commands[snapshell] )); then
   autoload -Uz add-zsh-hook
   if [ -n "$TMUX" ]; then
-    _snapshell_mark_start() { snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
-    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; }
+    _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
+    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; snapshell _hook-record --source "$TMUX_PANE" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT; }
   else
-    _snapshell_mark_start() { snapshell _hook-record --text "$1"; }
-    _snapshell_mark_end()   { :; }
+    if [ -n "$KITTY_WINDOW_ID" ] && [ -z "$KITTY_SHELL_INTEGRATION" ] && [ -r /usr/lib/kitty/shell-integration/zsh/kitty.zsh ]; then
+      export KITTY_SHELL_INTEGRATION=enabled
+      source /usr/lib/kitty/shell-integration/zsh/kitty.zsh
+    fi
+    _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; _SNAPSHELL_KITTY_WID="${KITTY_WINDOW_ID:-}"; _SNAPSHELL_KITTY_LISTEN="${KITTY_LISTEN_ON:-}"; }
+    _snapshell_mark_end()   { snapshell _hook-record --source "$(tty 2>/dev/null)" --kitty-window "${_SNAPSHELL_KITTY_WID:-}" --kitty-listen "${_SNAPSHELL_KITTY_LISTEN:-}" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT _SNAPSHELL_KITTY_WID _SNAPSHELL_KITTY_LISTEN; }
   fi
   add-zsh-hook preexec _snapshell_mark_start
   add-zsh-hook precmd  _snapshell_mark_end

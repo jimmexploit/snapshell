@@ -24,25 +24,46 @@ ambiguous when multiple panes in the same session run commands close
 together.
 
 The shell hook therefore writes an **append-only command log**, one line per
-completed command, newest last:
+completed command, newest last, with three record types:
 
 ```
-<pane_id> <prev_end> <start> <end>
+%<pane_id> <prev_end> <start> <end>     tmux pane: row-based, capturable via tmux
+tty <source> <command text...>          plain terminal: text only, no output
+ktty <source> <kittywid> <listen> <text> kitty terminal: output via kitty
 ```
 
-where the rows are absolute (`history_size + cursor_y`). Each session has
-its own log at `<session_root>/logs/<name>/commands.log` (the daemon points
-the hook at it via the `~/.local/state/snapshell/activesession` pointer),
-so every session keeps its own full command history. Alt+2 reads the **last
-line** of the active session's log and captures that pane's range. This is
-deterministic: the last-written record is always the most recently
-completed command, no focus resolution, no mtime scanning.
+For a tmux record the rows are absolute (`history_size + cursor_y`); for a
+plain-terminal record there is no tmux scrollback to capture from, so the
+command text itself is the capture — unless it ran in a kitty window with
+shell integration enabled (`ktty` record), in which case its output is read
+back from that window with `kitty @ --to <listen> get-text --match
+id:<kittywid> --extent last_cmd_output`. Each session has its own log at
+`<session_root>/logs/<name>/commands.log` (the daemon points the hook at it
+via the `~/.local/state/snapshell/activesession` pointer), so every session
+keeps its own full command history. Alt+2 reads the **last line** of the
+active session's log and dispatches on the first field: a `%` pane id → run
+`tmux capture-pane` over that row range; a `tty` record → return the command
+text verbatim; a `ktty` record → return the command text plus its output from
+kitty. This is deterministic: the last-written record is always the most
+recently completed command, wherever it was typed — no focus resolution, no
+mtime scanning.
 
 ## Flow
 
 1. Read the last line of the active session's command log
    (`<session_root>/logs/<name>/commands.log`, passed in by the daemon).
    Skip torn/invalid lines and fall back to the previous valid record.
+   - Plain record (`tty ...`): return the command text directly (no tmux
+     involved — works even when the tmux binary is absent).
+   - Kitty record (`ktty ...`): return the command text, plus its output
+     when the record has a kitty window id and `include_output` is on: run
+     `kitty @ --to <listen> get-text --match id:<kittywid> --extent
+     last_cmd_output` and append the result. A missing `kitty` binary or a
+     dead socket/window is a named error ("kitty not found on PATH" /
+     "...is that kitty window still open?"), not a panic or silent nothing.
+     Without shell-integration marks in that window the extent comes back
+     empty and the command text alone is returned.
+   - tmux record (`%N ...`): continue.
 2. Run `tmux capture-pane -p -S <start_row> -E <end_row> -t <pane_id>` to
    get the literal text, including the real prompt line and full output.
    The absolute rows are translated to screen-relative rows by subtracting

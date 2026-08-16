@@ -45,9 +45,13 @@ func newHookMarkCmd() *cobra.Command {
 }
 
 // newHookRecordCmd is the hidden helper the shell hook snippet calls to
-// record the last command's text for the plain-shell Alt+2 fallback.
+// record the last command's text for the plain-shell Alt+2 fallback and to
+// append it to the active session's command history.
 func newHookRecordCmd() *cobra.Command {
 	var text string
+	var source string
+	var kittyWindow string
+	var kittyListen string
 
 	cmd := &cobra.Command{
 		Use:    "_hook-record",
@@ -57,11 +61,14 @@ func newHookRecordCmd() *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			// Silent on failure: this runs on every command and must not
 			// spam the terminal.
-			_ = shellhook.RecordCommand(text)
+			_ = shellhook.RecordCommand(source, kittyWindow, kittyListen, text)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&text, "text", "", "the executed command's text")
+	cmd.Flags().StringVar(&source, "source", "", "where the command ran (tmux pane id, or tty device); shown in the session history")
+	cmd.Flags().StringVar(&kittyWindow, "kitty-window", "", "the kitty window id (KITTY_WINDOW_ID) the command ran in, when it ran in a plain kitty tab; enables output capture")
+	cmd.Flags().StringVar(&kittyListen, "kitty-listen", "", "the kitty listen socket (KITTY_LISTEN_ON) for that window")
 
 	return cmd
 }

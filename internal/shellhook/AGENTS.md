@@ -28,31 +28,49 @@ and end phases, so it keeps a per-pane marker file as scratch state:
 
 ## Command log (what Alt+2 actually reads)
 
-On every **completed** command, the hook appends a single line to a command
-log:
+On every **completed** command, the hook appends a single line to the
+active session's command log `<session_root>/logs/<name>/commands.log`
+(the daemon points the hook at it via the
+`~/.local/state/snapshell/activesession` pointer file, written on `start`,
+removed on `stop`/shutdown). With no session active nothing is logged.
 
-- While a session is active, the record goes to **that session's** log at
-  `<session_root>/logs/<name>/commands.log` — the daemon points the hook at
-  it via the `~/.local/state/snapshell/activesession` pointer file (written
-  on `start`, removed on `stop`/shutdown), so each session keeps its own
-  full command history.
-- With no session active, the record falls back to the global
-  `~/.local/state/snapshell/commandlog`.
-- Format: one line per command, newest last, no JSON:
-  ```
-  <pane_id> <prev_end> <start_row> <end_row>
-  ```
-  e.g. `%7 -1 320 328`.
-- Appended only when the command actually completed — never write a record
+Three record types, newest last:
+
+```
+%<pane_id> <prev_end> <start> <end>     tmux: rows → tmux capture
+tty <source> <command text...>          plain terminal: text only
+ktty <source> <kittywid> <listen> <text> kitty terminal: output via kitty
+```
+
+- **tmux commands** (inside `$TMUX`): `_hook-mark`'s end phase appends the
+  row record `<pane_id> <prev_end> <start_row> <end_row>`, e.g.
+  `%7 -1 320 328`, from which `tmuxcap` captures the full prompt + output.
+  Appended only when the command actually completed — never write a record
   with `end_row == -1`, so an interrupted command (Ctrl-C mid-run, or a
   DEBUG/PROMPT_COMMAND race) never becomes the "last" command Alt+2
   captures.
-- Use a single `write(2)` per record (O_APPEND) so a concurrent reader
-  never sees a torn line.
+- **plain-terminal commands** (no `$TMUX`): `_hook-record` appends
+  `tty <source> <command text...>`, e.g. `tty /dev/pts/5 whoami`. There is
+  no tmux scrollback to capture, so the text is the capture.
+- **kitty plain-terminal commands**: when the shell ran in a kitty window
+  (`$KITTY_WINDOW_ID` set), the record carries the window id and listen
+  socket so `tmuxcap` can read the command's output back:
+  `ktty /dev/pts/5 3 unix:/tmp/kitty-2200 whoami`. For that to work the
+  window's shell must have kitty shell integration enabled — the snippets
+  do this themselves: when a non-tmux shell has `$KITTY_WINDOW_ID` but no
+  `$KITTY_SHELL_INTEGRATION`, they set the variable and `source`
+  `/usr/lib/kitty/shell-integration/{bash,zsh}/kitty.{bash,zsh}`, which
+  installs the OSC 133 prompt/command marks `get-text --extent
+  last_cmd_output` relies on. Both branches capture `$KITTY_WINDOW_ID` and
+  `$KITTY_LISTEN_ON` at command start and pass them via
+  `--kitty-window`/`--kitty-listen`.
+
+Use a single `write(2)` per record (O_APPEND) so a concurrent reader never
+sees a torn line.
 
 This is the source of truth for Alt+2: `tmuxcap` reads the last line of the
 active session's log, so it always captures the most recently completed
-command regardless of which pane it ran in.
+command regardless of which shell or pane it ran in.
 
 ## bash snippet (conceptual — implement and test against a real bash)
 
@@ -66,10 +84,15 @@ Hook points:
   via `PROMPT_COMMAND`.
 - Skip recording if the command that just ran was empty (blank Enter) —
   compare against `$BASH_COMMAND` / history, don't just always write.
-- Only do any of this when `$TMUX` is set — no-op entirely outside tmux
-  (cheap early-return, don't add overhead to every prompt for users not
-  in tmux). Outside tmux the hook records only the command *text* via
-  `_hook-record` (see below).
+- Outside tmux the hook records the command *text* via `_hook-record` (see
+  below). When the plain shell runs in kitty it additionally enables kitty
+  shell integration (`export KITTY_SHELL_INTEGRATION=enabled; source
+  /usr/lib/kitty/shell-integration/bash/kitty.bash`, guarded by
+  `$KITTY_WINDOW_ID` set, `$KITTY_SHELL_INTEGRATION` unset, and the file
+  present) so Alt+2 can capture the command's output from the window; the
+  snippet captures `$KITTY_WINDOW_ID`/`$KITTY_LISTEN_ON` per command and
+  passes them to `_hook-record`. Never enable this inside `$TMUX` — kitty's
+  prompt marks would leak into the tmux capture.
 - The DEBUG trap must never treat its own probe commands or other
   frameworks' probes as user commands (skip `:`, `builtin ...`, `_snapshell_*`,
   `__bp_*`, and any function name).
@@ -95,13 +118,32 @@ snippet itself minimal (less to get wrong across bash/zsh/tmux version
 differences) and keeps the marker/log formats' implementation in one place
 (Go), not duplicated per-shell.
 
-## Plain-shell fallback (no tmux)
+## Plain-shell fallback and session history (no tmux)
 
 `RecordCommand` (wrapped as `snapshell _hook-record`) overwrites
 `~/.local/state/snapshell/lastcommand` with the most recent command's text.
-The daemon falls back to it when Alt+2 fires outside tmux. It must not
-record framework probes (`builtin ...`, DEBUG-trap fragments from other
-prompt frameworks) — those are not user commands.
+The daemon falls back to it only when tmux is genuinely unavailable and the
+last record needs tmux. It must not record framework probes (`builtin ...`,
+DEBUG-trap fragments from other prompt frameworks) — those are not user
+commands.
+
+`_hook-record` also appends every command — from tmux panes AND plain
+terminals — to the active session's history at
+`<session_root>/logs/<name>/commands.history`, one line per command:
+
+```
+2026-08-16 04:05:00  %1        ls -la /tmp
+2026-08-16 04:10:12  /dev/pts/3  uname -r
+```
+
+The snippet passes `--source` (`$TMUX_PANE` in tmux, `$(tty)` outside) so
+each line says where the command ran. Newlines in the command text are
+collapsed to spaces so every record is exactly one line. This gives each
+session a complete command history from every shell, not just tmux — the
+daemon's `commands.log` row records remain the Alt+2 capture source, and
+`commands.history` is the human-readable full record. With no active
+session, `_hook-record` only writes `lastcommand` and creates no history
+file.
 
 ## Install instructions
 

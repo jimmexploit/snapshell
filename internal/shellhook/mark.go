@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"snapshell/internal/daemon"
 )
@@ -22,6 +23,10 @@ var commandLogPath = daemon.CommandLogPath
 // activeSessionPath resolves the daemon's active-session pointer; a
 // variable so tests can point it at a temp file. See daemon.ActiveSessionPath.
 var activeSessionPath = daemon.ActiveSessionPath
+
+// lastCommandPath resolves where the plain-shell fallback stores the most
+// recent command's text; a variable so tests can point it at a temp dir.
+var lastCommandPath = daemon.LastCommandPath
 
 // Mark records tmux row positions for a pane into its marker file and
 // returns the recorded absolute row.
@@ -117,15 +122,80 @@ func activeSessionLog() string {
 	return strings.TrimSpace(string(data))
 }
 
-// RecordCommand stores the most recent command's text for the plain-shell
-// Alt+2 fallback (outside tmux there are no row markers, so the daemon
-// captures the command from here instead). The marker file it overwrites
-// on every command.
-func RecordCommand(text string) error {
-	if err := os.MkdirAll(filepath.Dir(daemon.LastCommandPath()), 0o700); err != nil {
+// activeSessionDir returns the log directory of the active session (the
+// directory holding its commands.log), or "" when no session is active.
+func activeSessionDir() string {
+	if p := activeSessionLog(); p != "" {
+		return filepath.Dir(p)
+	}
+	return ""
+}
+
+// RecordCommand records a completed command's text. It always overwrites
+// the plain-shell Alt+2 fallback file (~/.local/state/snapshell/lastcommand)
+// and appends a readable line to the active session's history
+// (<session_root>/logs/<name>/commands.history), which together document
+// every command from every shell.
+//
+// When the command ran in a plain terminal (source doesn't look like a
+// tmux pane id), it is also appended to the session's command log so Alt+2
+// picks up the most recently completed command no matter which shell it was
+// typed in:
+//
+//	tty <source> <command text...>                             (no kitty)
+//	ktty <source> <kitty-window> <kitty-listen> <command text...>  (in kitty)
+//
+// The kitty window id + listen socket let tmuxcap read the command's output
+// back from the window's scrollback via `kitty @ get-text`. tmux commands
+// don't write these records — their row record in commands.log is written
+// by the _hook-mark end phase and the output is captured from tmux.
+//
+// Empty text (a skipped probe or an empty command) is ignored entirely.
+// The shell snippets filter out framework probes before calling this, so
+// only real user commands are recorded.
+func RecordCommand(source, kittyWindow, kittyListen, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(lastCommandPath()), 0o700); err != nil {
 		return err
 	}
-	return writeAtomic(daemon.LastCommandPath(), text+"\n")
+	if err := writeAtomic(lastCommandPath(), text+"\n"); err != nil {
+		return err
+	}
+	dir := activeSessionDir()
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(source, "%") {
+		line := "tty"
+		if kittyWindow != "" {
+			line = "ktty"
+		}
+		if kittyWindow != "" {
+			line += " " + source + " " + kittyWindow + " " + kittyListen + " " + text
+		} else {
+			line += " " + source + " " + text
+		}
+		if err := appendWrite(filepath.Join(dir, "commands.log"), line+"\n"); err != nil {
+			return err
+		}
+	}
+	return appendWrite(filepath.Join(dir, "commands.history"), formatHistoryLine(source, text))
+}
+
+// formatHistoryLine renders one command-history record: an ISO-ish
+// timestamp, the source (tmux pane or tty), and the command text with
+// newlines collapsed so every record is exactly one line.
+func formatHistoryLine(source, text string) string {
+	if source == "" {
+		source = "?"
+	}
+	flat := strings.NewReplacer("\r\n", " ", "\n", " ").Replace(text)
+	return fmt.Sprintf("%s  %s  %s\n", time.Now().Format("2006-01-02 15:04:05"), source, flat)
 }
 
 // tmuxCursorAbs returns the pane's absolute cursor row = history_size +

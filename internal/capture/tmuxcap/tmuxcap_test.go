@@ -54,6 +54,52 @@ case "$sub" in
 esac
 `
 
+// fakeKittyScript emulates `kitty @ get-text --to <sock> --match id:<wid>
+// --extent last_cmd_output`: it returns the contents of KITTYCAP_OUTPUT_FILE
+// and records the full arg list into KITTYCAP_ARGS_FILE so tests can assert
+// the exact invocation. KITTYCAP_FAIL=1 makes it exit 1 (window gone).
+const fakeKittyScript = `#!/bin/sh
+case "$*" in
+  *get-text*)
+    echo "$@" > "$KITTYCAP_ARGS_FILE"
+    if [ "$KITTYCAP_FAIL" = "1" ]; then
+      echo "kitty: could not connect to window" >&2
+      exit 1
+    fi
+    cat "$KITTYCAP_OUTPUT_FILE"
+    ;;
+  *)
+    echo "unexpected kitty args: $*" >&2
+    exit 1
+    ;;
+esac
+`
+
+// setUpKitty isolates PATH to a fake kitty (no tmux — ktty records never
+// touch tmux) whose get-text returns output. Returns the log path and the
+// file where the fake kitty records its args.
+func setUpKitty(t *testing.T, output string) (logFile string, kittyArgsFile string) {
+	t.Helper()
+	binDir := t.TempDir()
+	kittyArgsFile = filepath.Join(t.TempDir(), "kittyargs")
+	outputFile := filepath.Join(t.TempDir(), "kout")
+	if err := os.WriteFile(outputFile, []byte(output), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "kitty"), []byte(fakeKittyScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// binDir shadows the real kitty (LookPath finds the fake first); the
+	// real PATH stays so the fake's own `cat` works.
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("KITTYCAP_ARGS_FILE", kittyArgsFile)
+	t.Setenv("KITTYCAP_OUTPUT_FILE", outputFile)
+	t.Setenv("KITTYCAP_FAIL", "")
+
+	logFile = filepath.Join(t.TempDir(), "commandlog")
+	return logFile, kittyArgsFile
+}
+
 // setUp isolates PATH to the fake tmux and configures its inputs. hs is the
 // history_size the fake reports.
 func setUp(t *testing.T, hs string) (logFile string, argsFile string) {
@@ -231,6 +277,88 @@ func TestCaptureCommandOnlyStopsAtCommandLine(t *testing.T) {
 	}
 }
 
+func TestCapturePlainRecordReturnsText(t *testing.T) {
+	// A command typed in a plain terminal (kitty tab, no tmux) is logged as
+	// "tty <source> <command...>". Alt+2 must return that text directly —
+	// no tmux scrollback exists to capture from.
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "tty /dev/pts/5 cat ~/.local/share/snapshell/global2/blog.md")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "cat ~/.local/share/snapshell/global2/blog.md" {
+		t.Fatalf("Text = %q, want the plain-record command text", res.Text)
+	}
+}
+
+func TestCapturePlainLastBeatsTmuxEarlier(t *testing.T) {
+	// The user ran commands in tmux, then opened a kitty tab and typed a
+	// command. The last log line is the plain record, so Alt+2 must return
+	// the kitty command — not the earlier tmux one.
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%3 31 33 62", "tty /dev/pts/5 whoami")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "whoami" {
+		t.Fatalf("Text = %q, want the plain (kitty) command %q", res.Text, "whoami")
+	}
+	// No tmux capture-pane should have run for a plain record.
+	if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
+		t.Fatalf("capture-pane should not run for a plain record")
+	}
+}
+
+func TestCaptureTmuxLastBeatsPlainEarlier(t *testing.T) {
+	// Plain command first, then a tmux command: last line wins, tmux record
+	// is captured from the pane.
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "tty /dev/pts/5 whoami", "%1 7 9 14")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "row 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\n" {
+		t.Fatalf("Text = %q, want the last (tmux) command capture", res.Text)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-t %1") {
+		t.Fatalf("capture-pane args = %q, want -t %%1", args)
+	}
+}
+
+func TestCapturePlainRecordWorksWithoutTmuxBinary(t *testing.T) {
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "tty /dev/pts/5 whoami")
+	t.Setenv("PATH", t.TempDir()) // no tmux anywhere
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture of a plain record should not need tmux: %v", err)
+	}
+	if res.Text != "whoami" {
+		t.Fatalf("Text = %q, want %q", res.Text, "whoami")
+	}
+}
+
+func TestCaptureSkipsTornPlainLastLine(t *testing.T) {
+	logFile, _ := setUp(t, "0")
+	// A plain record with no text is torn/invalid; fall back to the tmux
+	// record before it.
+	writeLog(t, logFile, "%1 7 9 14", "tty /dev/pts/5")
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "row 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\n" {
+		t.Fatalf("Text = %q, want the previous valid (tmux) record", res.Text)
+	}
+}
+
 func TestCaptureMissingLogIsActionable(t *testing.T) {
 	logFile, _ := setUp(t, "0")
 	_, err := Capture(logFile, true)
@@ -272,6 +400,107 @@ func TestCaptureNotInTmux(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not in a tmux session") {
 		t.Fatalf("error should mention not in a tmux session, got: %v", err)
+	}
+}
+
+func TestCaptureKittyRecordReturnsCommandWithOutput(t *testing.T) {
+	// A command typed in a plain kitty tab with shell integration enabled is
+	// logged as "ktty <source> <wid> <listen> <command...>". Alt+2 must read
+	// the command's output back via `kitty @ get-text` and return command +
+	// output.
+	logFile, argsFile := setUpKitty(t, "PORT    STATE SERVICE\n22/tcp   open  ssh\n")
+	writeLog(t, logFile, "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 nmap -p 22 10.10.11.42")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	want := "nmap -p 22 10.10.11.42\nPORT    STATE SERVICE\n22/tcp   open  ssh\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q", res.Text, want)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "--to unix:/tmp/kitty-2200") ||
+		!strings.Contains(string(args), "--match id:3") ||
+		!strings.Contains(string(args), "--extent last_cmd_output") {
+		t.Fatalf("kitty get-text args = %q, want --to/--match id:3/--extent last_cmd_output", args)
+	}
+}
+
+func TestCaptureKittyRecordEmptyOutputReturnsCommandOnly(t *testing.T) {
+	// The window's shell had no shell integration marks (e.g. started before
+	// the hook was installed), so get-text returns nothing — the command text
+	// alone is still captured.
+	logFile, _ := setUpKitty(t, "")
+	writeLog(t, logFile, "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 whoami")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "whoami" {
+		t.Fatalf("Text = %q, want command text only", res.Text)
+	}
+}
+
+func TestCaptureKittyRecordSkipsOutputWhenDisabled(t *testing.T) {
+	// includeOutput=false: command text only, kitty never invoked.
+	logFile, argsFile := setUpKitty(t, "some output that must be ignored\n")
+	writeLog(t, logFile, "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 whoami")
+
+	res, err := Capture(logFile, false)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "whoami" {
+		t.Fatalf("Text = %q, want command text only", res.Text)
+	}
+	if _, err := os.Stat(argsFile); !os.IsNotExist(err) {
+		t.Fatalf("kitty should not be invoked when output is disabled")
+	}
+}
+
+func TestCaptureKittyRecordMissingKittyBinary(t *testing.T) {
+	// The kitty binary is gone (or not on PATH): name it in the error.
+	logFile, _ := setUpKitty(t, "ignored")
+	writeLog(t, logFile, "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 whoami")
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := Capture(logFile, true)
+	if err == nil {
+		t.Fatal("missing kitty should error")
+	}
+	if !strings.Contains(err.Error(), "kitty not found on PATH") {
+		t.Fatalf("error should name the missing kitty binary, got: %v", err)
+	}
+}
+
+func TestCaptureKittyRecordGetTextFailureIsActionable(t *testing.T) {
+	// The window closed or the socket went stale: surface it, don't crash.
+	logFile, _ := setUpKitty(t, "ignored")
+	writeLog(t, logFile, "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 whoami")
+	t.Setenv("KITTYCAP_FAIL", "1")
+
+	_, err := Capture(logFile, true)
+	if err == nil {
+		t.Fatal("get-text failure should error")
+	}
+	if !strings.Contains(err.Error(), "kitty") || !strings.Contains(err.Error(), "window") {
+		t.Fatalf("error should be actionable about kitty/window, got: %v", err)
+	}
+}
+
+func TestCaptureKittyLastBeatsTmuxEarlier(t *testing.T) {
+	// A tmux command, then a plain kitty command: the ktty record wins.
+	logFile, _ := setUpKitty(t, "hello\n")
+	writeLog(t, logFile, "%3 31 33 62", "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 echo hi")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if res.Text != "echo hi\nhello\n" {
+		t.Fatalf("Text = %q, want the last (kitty) command with output", res.Text)
 	}
 }
 

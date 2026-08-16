@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"snapshell/internal/daemon"
 )
 
 // fakeTmux emulates `tmux display-message -p -t <pane> '#{history_size}
@@ -49,6 +47,11 @@ func setUp(t *testing.T, pos string) (stateFile string) {
 	ap := filepath.Join(t.TempDir(), "activesession")
 	activeSessionPath = func() string { return ap }
 	t.Cleanup(func() { activeSessionPath = oactive })
+
+	olast := lastCommandPath
+	lc := filepath.Join(t.TempDir(), "lastcommand")
+	lastCommandPath = func() string { return lc }
+	t.Cleanup(func() { lastCommandPath = olast })
 	return stateFile
 }
 
@@ -274,13 +277,13 @@ func TestSnippetsMentionShell(t *testing.T) {
 }
 
 func TestRecordCommand(t *testing.T) {
-	setUp(t, "0 5") // redirects markers dir; lastcommand lives in state dir
+	setUp(t, "0 5")
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	if err := RecordCommand("uname -r"); err != nil {
+	if err := RecordCommand("pts/3", "", "", "uname -r"); err != nil {
 		t.Fatalf("RecordCommand: %v", err)
 	}
-	data, err := os.ReadFile(daemon.LastCommandPath())
+	data, err := os.ReadFile(lastCommandPath())
 	if err != nil {
 		t.Fatalf("read lastcommand: %v", err)
 	}
@@ -288,11 +291,152 @@ func TestRecordCommand(t *testing.T) {
 		t.Fatalf("lastcommand = %q, want %q", data, "uname -r\n")
 	}
 	// A later command replaces the earlier one.
-	if err := RecordCommand("whoami"); err != nil {
+	if err := RecordCommand("pts/3", "", "", "whoami"); err != nil {
 		t.Fatal(err)
 	}
-	data, _ = os.ReadFile(daemon.LastCommandPath())
+	data, _ = os.ReadFile(lastCommandPath())
 	if string(data) != "whoami\n" {
 		t.Fatalf("lastcommand = %q, want %q", data, "whoami\n")
+	}
+}
+
+func TestRecordCommandAppendsToSessionHistory(t *testing.T) {
+	setUp(t, "0 5")
+	// Simulate an active session: the daemon pointed activesession at this
+	// session's commands.log, so history goes next to it.
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme-box", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RecordCommand("%1", "", "", "ls -la /tmp"); err != nil {
+		t.Fatalf("RecordCommand: %v", err)
+	}
+	hist := filepath.Join(filepath.Dir(sessLog), "commands.history")
+	data, err := os.ReadFile(hist)
+	if err != nil {
+		t.Fatalf("read session history: %v", err)
+	}
+	line := string(data)
+	if !strings.Contains(line, "%1") || !strings.Contains(line, "ls -la /tmp") {
+		t.Fatalf("history line = %q, want source %%1 and command text", line)
+	}
+	if !strings.Contains(line, "  ") {
+		t.Fatalf("history line %q has no field separators", line)
+	}
+
+	// A second command from a plain terminal appends another history line.
+	if err := RecordCommand("/dev/pts/3", "", "", "uname -r"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(hist)
+	if got := strings.Count(string(data), "\n"); got != 2 {
+		t.Fatalf("history has %d lines, want 2:\n%s", got, data)
+	}
+}
+
+func TestRecordCommandPlainSourceAppendsTtyRecord(t *testing.T) {
+	setUp(t, "0 5")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A plain-terminal command goes into the unified command log as a
+	// text-only "tty" record so Alt+2 can read it back.
+	if err := RecordCommand("/dev/pts/5", "", "", "cat ~/blog.md"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(sessLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if string(data) != "tty /dev/pts/5 cat ~/blog.md\n" {
+		t.Fatalf("command log = %q, want a tty record", data)
+	}
+}
+
+func TestRecordCommandKittySourceAppendsKttyRecord(t *testing.T) {
+	setUp(t, "0 5")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A command typed in a plain kitty tab carries the window id + listen
+	// socket so Alt+2 can read the output back from the window.
+	if err := RecordCommand("/dev/pts/9", "3", "unix:/tmp/kitty-2200", "nmap -sV 10.10.11.42"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(sessLog)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	want := "ktty /dev/pts/9 3 unix:/tmp/kitty-2200 nmap -sV 10.10.11.42\n"
+	if string(data) != want {
+		t.Fatalf("command log = %q, want %q", data, want)
+	}
+}
+
+func TestRecordCommandTmuxSourceSkipsCommandLog(t *testing.T) {
+	setUp(t, "0 5")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// tmux commands don't add a tty record — their row record is written by
+	// the _hook-mark end phase; RecordCommand only feeds lastcommand + history.
+	if err := RecordCommand("%4", "", "", "ls /"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sessLog); !os.IsNotExist(err) {
+		t.Fatalf("tmux command must not write a tty record to the command log")
+	}
+}
+
+func TestRecordCommandEmptyTextIgnored(t *testing.T) {
+	setUp(t, "0 5")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordCommand("/dev/pts/5", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sessLog); !os.IsNotExist(err) {
+		t.Fatalf("empty command must not be recorded")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(sessLog), "commands.history")); !os.IsNotExist(err) {
+		t.Fatalf("empty command must not be recorded in history")
+	}
+}
+
+func TestRecordCommandCollapsesNewlines(t *testing.T) {
+	setUp(t, "0 5")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordCommand("%1", "", "", "for i in 1 2\n\ndo\n\techo hi\ndone"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(sessLog), "commands.history"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "\n"); got != 1 {
+		t.Fatalf("history must be one line per command, got %d lines:\n%s", got, data)
+	}
+}
+
+func TestRecordCommandNoSessionOnlyLastCommand(t *testing.T) {
+	setUp(t, "0 5") // no activesession pointer
+	if err := RecordCommand("pts/7", "", "", "echo no-session"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(lastCommandPath())
+	if err != nil || string(data) != "echo no-session\n" {
+		t.Fatalf("lastcommand = %q (err=%v), want the command text", data, err)
 	}
 }
