@@ -22,8 +22,9 @@ func fakeTmux(t *testing.T, binDir, stateFile string) {
 	}
 }
 
-// setUp isolates PATH to a fake tmux and redirects the markers dir. pos is
-// the initial "history_size cursor_y" the fake tmux reports.
+// setUp isolates PATH to a fake tmux and redirects the markers dir and
+// command log. pos is the initial "history_size cursor_y" the fake tmux
+// reports.
 func setUp(t *testing.T, pos string) (stateFile string) {
 	t.Helper()
 	binDir := t.TempDir()
@@ -38,6 +39,16 @@ func setUp(t *testing.T, pos string) (stateFile string) {
 	md := filepath.Join(t.TempDir(), "markers")
 	markersDir = func() string { return md }
 	t.Cleanup(func() { markersDir = orig })
+
+	olog := commandLogPath
+	lg := filepath.Join(t.TempDir(), "commandlog")
+	commandLogPath = func() string { return lg }
+	t.Cleanup(func() { commandLogPath = olog })
+
+	oactive := activeSessionPath
+	ap := filepath.Join(t.TempDir(), "activesession")
+	activeSessionPath = func() string { return ap }
+	t.Cleanup(func() { activeSessionPath = oactive })
 	return stateFile
 }
 
@@ -111,6 +122,125 @@ func TestMarkEndWithoutStartIsNoop(t *testing.T) {
 	}
 }
 
+func TestMarkEndAppendsToCommandLog(t *testing.T) {
+	stateFile := setUp(t, "0 5")
+	if _, err := Mark("%1", "start", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("2 7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%1", "end", ""); err != nil {
+		t.Fatalf("Mark end: %v", err)
+	}
+
+	data, err := os.ReadFile(commandLogPath())
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	// prev=-1, start=5, end=9 → "%1 -1 5 9"
+	if string(data) != "%1 -1 5 9\n" {
+		t.Fatalf("command log = %q, want %q", data, "%1 -1 5 9\n")
+	}
+}
+
+func TestMarkEndAppendsMultipleCommands(t *testing.T) {
+	stateFile := setUp(t, "0 5")
+	// First command: start at 5, end at 9.
+	if _, err := Mark("%1", "start", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("2 7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%1", "end", "9"); err != nil {
+		t.Fatal(err)
+	}
+	// Second command in a different pane: start at 20, end at 25.
+	if err := os.WriteFile(stateFile, []byte("0 20"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%7", "start", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("0 25"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%7", "end", "25"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(commandLogPath())
+	want := "%1 -1 5 9\n%7 -1 20 25\n"
+	if string(data) != want {
+		t.Fatalf("command log = %q, want %q", data, want)
+	}
+}
+
+func TestMarkEndWithoutStartAppendsNothing(t *testing.T) {
+	setUp(t, "2 7")
+	if _, err := Mark("%9", "end", ""); err != nil {
+		t.Fatalf("Mark end with no start should be a no-op, got %v", err)
+	}
+	if _, err := os.Stat(commandLogPath()); !os.IsNotExist(err) {
+		t.Fatal("command log should not exist when no command completed")
+	}
+}
+
+func TestMarkEndRoutesToActiveSessionLog(t *testing.T) {
+	stateFile := setUp(t, "0 5")
+	// Simulate an active session: the daemon pointed activesession at this
+	// session's log under <session_root>/logs/<name>/commands.log.
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme-box", "commands.log")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Mark("%1", "start", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("2 7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%1", "end", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(sessLog)
+	if err != nil {
+		t.Fatalf("read session log: %v", err)
+	}
+	if string(data) != "%1 -1 5 9\n" {
+		t.Fatalf("session log = %q, want %q", data, "%1 -1 5 9\n")
+	}
+	// The global log must NOT have the record.
+	if _, err := os.Stat(commandLogPath()); !os.IsNotExist(err) {
+		t.Fatal("record must not go to the global log while a session is active")
+	}
+}
+
+func TestMarkEndWithNoActiveSessionUsesGlobalLog(t *testing.T) {
+	stateFile := setUp(t, "0 5")
+	// No activesession pointer (empty/missing) → record goes to the global
+	// command log.
+	if _, err := Mark("%1", "start", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, []byte("2 7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Mark("%1", "end", ""); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(commandLogPath())
+	if err != nil {
+		t.Fatalf("read global log: %v", err)
+	}
+	if string(data) != "%1 -1 5 9\n" {
+		t.Fatalf("global log = %q, want %q", data, "%1 -1 5 9\n")
+	}
+}
+
 func TestMarkBadPhase(t *testing.T) {
 	setUp(t, "0 5")
 	if _, err := Mark("%1", "middle", ""); err == nil {
@@ -135,8 +265,11 @@ func TestSnippetsMentionShell(t *testing.T) {
 	if strings.Contains(BashSnippet, "internal-popup-inline") || strings.Contains(ZshSnippet, "internal-popup-inline") {
 		t.Fatal("snippets must not reference the removed inline caption form")
 	}
-	if !strings.Contains(BashSnippet, "record-command") || !strings.Contains(ZshSnippet, "record-command") {
+	if !strings.Contains(BashSnippet, "_hook-record") || !strings.Contains(ZshSnippet, "_hook-record") {
 		t.Fatal("snippets must record the command text for the plain-shell fallback")
+	}
+	if !strings.Contains(BashSnippet, "_hook-mark") || !strings.Contains(ZshSnippet, "_hook-mark") {
+		t.Fatal("snippets must call the hidden row-marker helper")
 	}
 }
 

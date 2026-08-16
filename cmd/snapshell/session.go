@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"snapshell/internal/daemon"
@@ -13,6 +16,16 @@ func newStartCmd() *cobra.Command {
 		Short: "Begin (or resume) a session named <name>",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			// First run: walk the user through a one-time setup before the
+			// session begins. Only when stdin is a real terminal — never in
+			// scripts/pipes, where the interactive wizard would hang.
+			if !configExists() && isTTY(os.Stdin) {
+				fmt.Println("First run — snapshell needs a one-time setup before we begin.")
+				if err := runSetup(os.Stdin); err != nil {
+					return err
+				}
+			}
+
 			// No need for the user to `daemon start` first — bring it up in
 			// the background if it isn't running.
 			if err := ensureDaemonStarted(); err != nil {

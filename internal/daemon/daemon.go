@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -66,9 +67,6 @@ type Daemon struct {
 	// cfg is the loaded configuration (screenshot tool, popup size, ...).
 	cfg *config.Config
 
-	// markersDir is where the shell hook writes per-pane row markers.
-	markersDir string
-
 	// screenshotFallbackWarn dedupes the one-time flameshot-fallback warning.
 	screenshotFallbackWarn sync.Once
 
@@ -76,6 +74,10 @@ type Daemon struct {
 	sockPath string
 	pidPath  string
 	logPath  string
+	// activeSessionPath is where the active-session pointer lives (points
+	// the shell hook at the active session's command log). See
+	// ActiveSessionPath.
+	activeSessionPath string
 
 	// captureHandler dispatches Alt+1/2/3 flows.
 	captureHandler CaptureHandler
@@ -106,13 +108,13 @@ func Run(opts Options) error {
 	}
 
 	d := &Daemon{
-		shutdown:    make(chan struct{}),
-		sessionRoot: sessionRoot,
-		cfg:         cfg,
-		markersDir:  filepath.Join(stateDir, "markers"),
-		sockPath:    filepath.Join(stateDir, "daemon.sock"),
-		pidPath:     filepath.Join(stateDir, "daemon.pid"),
-		logPath:     filepath.Join(stateDir, "daemon.log"),
+		shutdown:          make(chan struct{}),
+		sessionRoot:       sessionRoot,
+		cfg:               cfg,
+		sockPath:          filepath.Join(stateDir, "daemon.sock"),
+		pidPath:           filepath.Join(stateDir, "daemon.pid"),
+		logPath:           filepath.Join(stateDir, "daemon.log"),
+		activeSessionPath: filepath.Join(stateDir, "activesession"),
 	}
 
 	if err := d.start(opts.DisableHotkeys); err != nil {
@@ -181,13 +183,21 @@ func (d *Daemon) start(disableHotkeys bool) error {
 	return nil
 }
 
-// registerHotkeys grabs Alt+1/2/3. Grab failures are reported but do not
-// abort the daemon — the daemon stays usable for session/IPC purposes.
+// registerHotkeys grabs the configured global hotkeys (default Alt+1/2/3).
+// Grab failures are reported but do not abort the daemon — the daemon stays
+// usable for session/IPC purposes.
 func (d *Daemon) registerHotkeys() error {
 	unregister, err := hotkeys.GrabAll(
-		func() { d.onHotkey("screenshot") },
-		func() { d.onHotkey("code") },
-		func() { d.onHotkey("note") },
+		map[string]string{
+			"screenshot": d.cfg.Keymaps.Screenshot,
+			"code":       d.cfg.Keymaps.Command,
+			"note":       d.cfg.Keymaps.Note,
+		},
+		map[string]hotkeys.Handler{
+			"screenshot": func() { d.onHotkey("screenshot") },
+			"code":       func() { d.onHotkey("code") },
+			"note":       func() { d.onHotkey("note") },
+		},
 	)
 	if err != nil {
 		d.logger.Printf("hotkey grab warning: %v", err)
@@ -362,8 +372,19 @@ func (d *Daemon) handleStart(req Request) Response {
 		return fail(fmt.Sprintf("create session folder: %v", err))
 	}
 
+	// Point the shell hook at this session's command log so every command
+	// run while the session is active lands in
+	// <session_root>/logs/<name>/commands.log.
+	logPath := d.sessionLogPath(name)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		return fail(fmt.Sprintf("create session log dir: %v", err))
+	}
+	if err := writePointer(d.activeSessionPath, logPath); err != nil {
+		return fail(fmt.Sprintf("write active session pointer: %v", err))
+	}
+
 	d.session = &Session{Name: name, Dir: sessionDir, AttachNum: countAttachments(sessionDir)}
-	d.logger.Printf("session started: %s (dir=%s, attachments=%d)", name, sessionDir, d.session.AttachNum)
+	d.logger.Printf("session started: %s (dir=%s, log=%s, attachments=%d)", name, sessionDir, logPath, d.session.AttachNum)
 	if created {
 		return ok(fmt.Sprintf("started session %q", name))
 	}
@@ -379,6 +400,7 @@ func (d *Daemon) handleStop() Response {
 	}
 	name := d.session.Name
 	d.session = nil
+	_ = os.Remove(d.activeSessionPath)
 	d.logger.Printf("session stopped: %s", name)
 	return ok(fmt.Sprintf("stopped session %q", name))
 }
@@ -396,6 +418,35 @@ func (d *Daemon) handleStatus() Response {
 		d.logger.Printf("count entries: %v", err)
 	}
 	return ok(fmt.Sprintf("%s; active session: %s (%d entries)", base, d.session.Name, count))
+}
+
+// sessionLogPath returns the append-only command log path for a session:
+// <session_root>/logs/<name>/commands.log. Every completed command run
+// while the session is active is recorded here (see ActiveSessionPath).
+func (d *Daemon) sessionLogPath(name string) string {
+	return filepath.Join(d.sessionRoot, "logs", name, "commands.log")
+}
+
+// writePointer atomically writes a small pointer file (via temp + rename).
+func writePointer(path, content string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".pointer-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // setupSessionDir creates <root>/<name>/ and <root>/<name>/attachments/
@@ -502,7 +553,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	// ignored dialog never blocks the daemon or the next hotkey press.
 	// The dialog failing must not lose the screenshot that was just taken:
 	// it is still appended, just without a caption.
-	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Popup.Width, d.cfg.Popup.Height); err != nil {
+	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font); err != nil {
 		d.logger.Printf("capture screenshot: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath}); err != nil {
@@ -512,15 +563,23 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	}
 }
 
-// captureCode runs the Alt+2 flow: the last command's text (focused tmux
-// pane when in tmux, otherwise the shell hook's recorded command) → popup
-// caption → entry appended to blog.md.
+// captureCode runs the Alt+2 flow: the most recently completed command's
+// text (from the command log when in tmux, otherwise the shell hook's
+// recorded command) → popup caption → entry appended to blog.md.
 func (d *Daemon) captureCode(s *Session) {
-	res, err := tmuxcap.Capture(d.markersDir, d.cfg.OutputIncluded())
+	res, err := tmuxcap.Capture(d.sessionLogPath(s.Name), d.cfg.OutputIncluded())
 	if err != nil {
-		// Outside tmux there are no row markers; fall back to the command
-		// text the shell hook recorded. Full output needs tmux — the
-		// notification says so instead of staying silent.
+		if !errors.Is(err, tmuxcap.ErrNotInTmux) {
+			// In tmux but nothing captured (empty command log, bad record):
+			// show the specific, actionable error rather than falling back to
+			// a possibly-stale plain-shell last command.
+			d.logger.Printf("capture tmux: %v", err)
+			_ = notify.Send("snapshell", err.Error())
+			return
+		}
+		// Not in tmux: there are no row records, so fall back to the
+		// command text the shell hook recorded. Full output needs tmux —
+		// the notification says so instead of staying silent.
 		text, rerr := readLastCommand()
 		if rerr != nil || strings.TrimSpace(text) == "" {
 			d.logger.Printf("capture tmux: %v", err)
@@ -546,7 +605,7 @@ func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
 	// Same reasoning as the image flow: the captured command text is
 	// valuable on its own, so if the caption window can't spawn the entry
 	// is still appended without a caption.
-	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Popup.Width, d.cfg.Popup.Height); err != nil {
+	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font); err != nil {
 		d.logger.Printf("capture %s: popup: %v", source, err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
@@ -570,7 +629,7 @@ func readLastCommand() (string, error) {
 // and appends it to blog.md itself. There is no fallback entry — the note
 // text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
-	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Popup.Width, d.cfg.Popup.Height); err != nil {
+	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font); err != nil {
 		d.logger.Printf("capture note: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return
@@ -596,6 +655,7 @@ func (d *Daemon) cleanup() {
 	if d.listener != nil {
 		_ = d.listener.Close()
 	}
+	_ = os.Remove(d.activeSessionPath)
 	_ = os.Remove(d.pidPath)
 	_ = os.Remove(d.sockPath)
 	if d.logger != nil {

@@ -12,14 +12,20 @@ not by reading TOML itself.
 tool = "flameshot"        # or "mate-screenshot"
 
 [popup]
-width = 560               # caption window size in px (0 = let zenity pick)
-height = 320
+width = 560               # caption window width in px (0 = let zenity pick)
+height = 320              # caption/note text area height in px (0 = let zenity pick)
+font = "Sans 13"          # Pango font for the text you type ("" = zenity default)
 
 [capture]
 include_output = true     # false = Alt+2 captures only the command line
 
+[keymaps]
+screenshot = "Alt+1"      # global hotkeys; Alt=Mod1, Ctrl=Control,
+command    = "Alt+2"      # Super/Win=Mod4, raw Mod1..Mod5 accepted too
+note       = "Alt+3"
+
 [paths]
-session_root = "~/snapshell"
+session_root = "~/.local/share/snapshell"
 ```
 
 ## Behavior
@@ -30,6 +36,9 @@ session_root = "~/snapshell"
   the defaults. If it exists but is missing individual keys, fill in
   defaults for just those keys rather than erroring — partial configs are
   fine.
+- `ResetDefault() error`: move the current config to `config.toml.bak`
+  (if present) and write a fresh default file. Used by the setup wizard's
+  "reset to defaults" question.
 - Expand `~` in `session_root` (and anywhere else a path appears) using
   the real home directory (`os.UserHomeDir()`), don't rely on shell
   expansion since Go isn't invoking a shell to read this value.

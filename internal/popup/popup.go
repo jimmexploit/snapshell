@@ -43,7 +43,8 @@ type Result struct {
 // file is the captured image path relative to the session dir (image
 // mode); text is the captured command+output text (code mode) or ignored
 // (note mode). width/height size the dialog in pixels (0 = zenity's own
-// choice).
+// choice); font is a Pango font description for the text area ("" = the
+// default font).
 //
 // Empty or cancelled submit = "skip caption" for image/code (the entry is
 // still appended — losing an already-taken screenshot because the caption
@@ -54,8 +55,8 @@ type Result struct {
 // missing, dialog failed to launch) — in that case nothing is appended and
 // the caller decides how to fall back. A user pressing cancel is not an
 // error.
-func Capture(mode, sessionDir, file, text string, width, height int) error {
-	res, err := askDialog(mode, sessionDir, file, text, width, height)
+func Capture(mode, sessionDir, file, text string, width, height int, font string) error {
+	res, err := askDialog(mode, sessionDir, file, text, width, height, font)
 	if err != nil {
 		return err
 	}
@@ -63,13 +64,13 @@ func Capture(mode, sessionDir, file, text string, width, height int) error {
 }
 
 // askDialog launches the zenity window and returns what the user did.
-func askDialog(mode, sessionDir, file, text string, width, height int) (Result, error) {
+func askDialog(mode, sessionDir, file, text string, width, height int, font string) (Result, error) {
 	bin, err := resolveZenity()
 	if err != nil {
 		return Result{}, err
 	}
 
-	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height)...)
+	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height, font)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err = cmd.Run()
@@ -85,7 +86,12 @@ func askDialog(mode, sessionDir, file, text string, width, height int) (Result, 
 }
 
 // zenityArgs builds the zenity argv for a mode.
-func zenityArgs(mode, sessionDir, file, text string, width, height int) []string {
+//
+// Every mode is a `--text-info --editable` text area: the caption/note
+// input fills the window and wraps, so the user can always see everything
+// they type. A `--forms` single-line entry was tried but it can't grow,
+// and zenity just leaves the rest of the window as dead space.
+func zenityArgs(mode, sessionDir, file, text string, width, height int, font string) []string {
 	args := []string{}
 	if width > 0 {
 		args = append(args, "--width", strconv.Itoa(width))
@@ -93,22 +99,23 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int) []string
 	if height > 0 {
 		args = append(args, "--height", strconv.Itoa(height))
 	}
+	if font != "" {
+		args = append(args, "--font", font)
+	}
 
 	switch mode {
 	case ModeImage:
 		label := describeImage(filepath.Join(sessionDir, file), file)
-		return append(args, "--forms",
+		return append(args, "--text-info", "--editable",
 			"--title=snapshell — add screenshot",
 			"--text="+escapeMarkup(label),
-			"--add-entry=Caption (optional)",
 			"--ok-label=Save",
 			"--cancel-label=Skip",
 		)
 	case ModeCode:
-		return append(args, "--forms",
+		return append(args, "--text-info", "--editable",
 			"--title=snapshell — add command",
 			"--text="+escapeMarkup(truncatePreview(text)),
-			"--add-entry=Caption (optional)",
 			"--ok-label=Save",
 			"--cancel-label=Skip",
 		)
@@ -120,9 +127,8 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int) []string
 			"--cancel-label=Discard",
 		)
 	default:
-		return append(args, "--forms",
+		return append(args, "--text-info", "--editable",
 			"--title=snapshell",
-			"--add-entry=Caption (optional)",
 			"--ok-label=Save",
 			"--cancel-label=Skip",
 		)

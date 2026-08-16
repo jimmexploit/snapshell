@@ -3,8 +3,9 @@
 # snapshell setup — one-shot installer.
 #
 # Installs the runtime dependencies for snapshell, builds the binary,
-# installs it to ~/go/bin, adds the shell hook to your rc file, and
-# (optionally) registers the systemd user unit.
+# installs it to ~/go/bin, and (optionally) registers the systemd user
+# unit. The interactive `snapshell setup` wizard afterwards handles the
+# shell hook and config file with Y/n prompts.
 #
 # Usage:
 #   ./scripts/setup.sh                 full install
@@ -155,23 +156,12 @@ case ":${PATH}:" in
 esac
 
 # ---------------------------------------------------------------------------
-# 4. Shell hook (bash and/or zsh)
+# 4. Shell hook + config
 # ---------------------------------------------------------------------------
 
-info "installing the shell hook..."
-install_hook() {
-  local shell="$1"
-  if "$BIN" shellhook install "$shell" 2>/dev/null; then
-    info "added $shell hook to your rc file — start a NEW shell/tmux pane for it to take effect"
-  else
-    warn "$shell hook not installed (already present, or rc file missing). Run '$BIN shellhook install $shell' to retry."
-  fi
-}
-
-case "$(basename "${SHELL:-bash}")" in
-  zsh) install_hook zsh; install_hook bash ;;
-  *)   install_hook bash; install_hook zsh ;;
-esac
+info "interactive wizard"
+info "  Run '$BIN setup' to add the shell hook, create/reset the config,"
+info "  and install any missing dependencies with Y/n prompts."
 
 # ---------------------------------------------------------------------------
 # 5. systemd user unit
@@ -206,7 +196,9 @@ fi
 
 info ""
 info "done. Next steps:"
-info "  1. Start a NEW shell/tmux pane (so the shell hook takes effect)."
-info "  2. Start the daemon:  $BIN daemon start"
-info "  3. Begin a session:   $BIN start my-box"
-info "  4. Capture:           Alt+1 screenshot | Alt+2 tmux command | Alt+3 note"
+info "  1. Run the interactive wizard:  $BIN setup"
+info "     (adds the shell hook, creates the config, checks dependencies)"
+info "  2. Start a NEW shell/tmux pane (so the shell hook takes effect)."
+info "  3. Start the daemon:  $BIN daemon start"
+info "  4. Begin a session:   $BIN start my-box"
+info "  5. Capture:           Alt+1 screenshot | Alt+2 tmux command | Alt+3 note"

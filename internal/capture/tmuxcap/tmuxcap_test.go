@@ -1,6 +1,7 @@
 package tmuxcap
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -8,12 +9,11 @@ import (
 	"testing"
 )
 
-// fakeTmuxScript emulates the three tmux invocations this package makes,
+// fakeTmuxScript emulates the two tmux invocations this package makes,
 // using only shell builtins so it works on an isolated PATH:
 //
-//   - display-message -p '#{pane_id}'            → %0
 //   - display-message -p -t <pane> '#{history_size}' → value from hsFile
-//   - capture-pane -p -S <s> -E <e> -t <pane>     → "row <s>".."row <e>",
+//   - capture-pane -p -S <s> -E <e> -t <pane>        → "row <s>".."row <e>",
 //     and records the full arg list into argsFile so tests can assert the
 //     exact translated range.
 //
@@ -26,14 +26,8 @@ case "$sub" in
       echo "no server running" >&2
       exit 1
     fi
-    eval fmt=\${$#}
-    case "$fmt" in
-      '#{pane_id}') echo '%0' ;;
-      '#{history_size}')
-        IFS= read -r hs < "$TMUXCAP_HS_FILE"
-        echo "$hs"
-        ;;
-    esac
+    IFS= read -r hs < "$TMUXCAP_HS_FILE"
+    echo "$hs"
     ;;
   capture-pane)
     echo "$@" > "$TMUXCAP_ARGS_FILE"
@@ -60,10 +54,9 @@ case "$sub" in
 esac
 `
 
-// setUp isolates PATH to the fake tmux, points the markers dir at a temp
-// dir, and configures the fake's inputs. hs is the history_size the fake
-// reports.
-func setUp(t *testing.T, hs string) (markersDir string, argsFile string) {
+// setUp isolates PATH to the fake tmux and configures its inputs. hs is the
+// history_size the fake reports.
+func setUp(t *testing.T, hs string) (logFile string, argsFile string) {
 	t.Helper()
 	binDir := t.TempDir()
 	hsFile := filepath.Join(t.TempDir(), "hs")
@@ -78,22 +71,29 @@ func setUp(t *testing.T, hs string) (markersDir string, argsFile string) {
 	t.Setenv("TMUXCAP_HS_FILE", hsFile)
 	t.Setenv("TMUXCAP_ARGS_FILE", argsFile)
 
-	markersDir = t.TempDir()
-	return markersDir, argsFile
+	logFile = filepath.Join(t.TempDir(), "commandlog")
+	return logFile, argsFile
 }
 
-func writeMarker(t *testing.T, dir, pane, content string) {
+// writeLog appends one or more "<pane> <prev> <start> <end>" lines to the
+// command log, newest last.
+func writeLog(t *testing.T, path string, lines ...string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, pane+".last"), []byte(content), 0o600); err != nil {
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(l)
+		sb.WriteString("\n")
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCaptureFullRange(t *testing.T) {
-	md, argsFile := setUp(t, "3")
-	writeMarker(t, md, "%0", "9\n10\n15\n") // prev=9, start=10, end=15
+	logFile, argsFile := setUp(t, "3")
+	writeLog(t, logFile, "%0 9 10 15") // prev=9, start=10, end=15
 
-	res, err := Capture(md, true)
+	res, err := Capture(logFile, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -110,13 +110,56 @@ func TestCaptureFullRange(t *testing.T) {
 	}
 }
 
+func TestCaptureLastLineWins(t *testing.T) {
+	// Two commands, from two different panes in the same session: `ls` ran
+	// in %0, then `cat` ran in %7. The log's last line is the `cat` record,
+	// so Alt+2 must capture %7 — not the earlier %0 record, and not by
+	// guessing a focused pane.
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%0 9 10 15", "%7 20 21 30")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	// hs=0, prev=20, end-1=29 → rows 20..29 (the %7 cat command).
+	want := "row 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want the last (%%7) command %q", res.Text, want)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-t %7") {
+		t.Fatalf("capture-pane args = %q, want -t %%7", args)
+	}
+}
+
+func TestCaptureSkipsTornLastLine(t *testing.T) {
+	// A torn/partial last line (e.g. the shell was killed mid-write) must
+	// not break the capture — fall back to the previous valid record.
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%0 9 10 15", "%7 20 21 30", "garbage")
+
+	res, err := Capture(logFile, true)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	want := "row 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want previous valid record %q", res.Text, want)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-t %7") {
+		t.Fatalf("capture-pane args = %q, want -t %%7", args)
+	}
+}
+
 func TestCaptureNegativeRangeIntoHistory(t *testing.T) {
 	// Scrolled output: marker rows far above the current visible top
 	// (hs huge) must produce negative capture-pane rows.
-	md, argsFile := setUp(t, "200")
-	writeMarker(t, md, "%0", "29\n30\n42\n")
+	logFile, argsFile := setUp(t, "200")
+	writeLog(t, logFile, "%0 29 30 42")
 
-	res, err := Capture(md, true)
+	res, err := Capture(logFile, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -135,10 +178,10 @@ func TestCaptureNegativeRangeIntoHistory(t *testing.T) {
 }
 
 func TestCaptureNoOutputCollapsesToPromptLine(t *testing.T) {
-	md, argsFile := setUp(t, "0")
-	writeMarker(t, md, "%0", "4\n5\n5\n") // no output: start == end
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%0 4 5 5") // no output: start == end
 
-	res, err := Capture(md, true)
+	res, err := Capture(logFile, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -154,10 +197,10 @@ func TestCaptureNoOutputCollapsesToPromptLine(t *testing.T) {
 func TestCaptureTwoLinePromptIncludesBothLines(t *testing.T) {
 	// Two-line PS1: prompt starts at row 7 (line A), command on row 8
 	// (line B), first output row 9, end 14. prev=7 captures line A too.
-	md, argsFile := setUp(t, "0")
-	writeMarker(t, md, "%0", "7\n9\n14\n")
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%0 7 9 14")
 
-	res, err := Capture(md, true)
+	res, err := Capture(logFile, true)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -172,10 +215,10 @@ func TestCaptureTwoLinePromptIncludesBothLines(t *testing.T) {
 
 func TestCaptureCommandOnlyStopsAtCommandLine(t *testing.T) {
 	// includeOutput=false: capture prompt lines + command, not output.
-	md, argsFile := setUp(t, "0")
-	writeMarker(t, md, "%0", "7\n9\n14\n")
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%0 7 9 14")
 
-	res, err := Capture(md, false)
+	res, err := Capture(logFile, false)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -188,61 +231,62 @@ func TestCaptureCommandOnlyStopsAtCommandLine(t *testing.T) {
 	}
 }
 
-func TestCaptureCommandOnlyLegacyMarkerFallsBackToCommandLine(t *testing.T) {
-	// Legacy 2-row marker (no prev row): command-only falls back to
-	// start-1, the row the command was typed on.
-	md, argsFile := setUp(t, "0")
-	writeMarker(t, md, "%0", "9\n14\n")
-
-	res, err := Capture(md, false)
-	if err != nil {
-		t.Fatalf("Capture: %v", err)
-	}
-	if res.Text != "row 8\n" { // [start-1 .. start-1] = [8 .. 8]
-		t.Fatalf("Text = %q, want %q", res.Text, "row 8\n")
-	}
-	args, _ := os.ReadFile(argsFile)
-	if !strings.Contains(string(args), "-S 8 -E 8") {
-		t.Fatalf("capture-pane args = %q, want -S 8 -E 8", args)
-	}
-}
-
-func TestCaptureMissingMarkerIsActionable(t *testing.T) {
-	md, _ := setUp(t, "0")
-	_, err := Capture(md, true)
+func TestCaptureMissingLogIsActionable(t *testing.T) {
+	logFile, _ := setUp(t, "0")
+	_, err := Capture(logFile, true)
 	if err == nil {
-		t.Fatal("expected error for missing marker")
+		t.Fatal("expected error for missing log")
+	}
+	if errors.Is(err, ErrNotInTmux) {
+		t.Fatalf("empty command log is NOT a not-in-tmux condition, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "shell hook is sourced") {
 		t.Fatalf("error should tell the user to check the shell hook, got: %v", err)
 	}
 }
 
-func TestCaptureDegenerateMarker(t *testing.T) {
-	md, _ := setUp(t, "0")
-	writeMarker(t, md, "%0", "3\n2\n") // end < start
-	if _, err := Capture(md, true); err == nil {
-		t.Fatal("degenerate marker should error")
+func TestCaptureDegenerateRecord(t *testing.T) {
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 3 2 1") // end < start
+	if _, err := Capture(logFile, true); err == nil {
+		t.Fatal("degenerate record should error")
 	}
-}
-
-func TestFocusedPaneMissingTmux(t *testing.T) {
-	t.Setenv("PATH", t.TempDir()) // empty
-	if _, err := FocusedPane(); err == nil {
-		t.Fatal("missing tmux should error")
-	} else if !strings.Contains(err.Error(), "tmux") {
-		t.Fatalf("error should name tmux, got: %v", err)
+	// An incomplete record (end -1) is also rejected as degenerate.
+	logFile2, _ := setUp(t, "0")
+	writeLog(t, logFile2, "%0 3 2 -1")
+	if _, err := Capture(logFile2, true); err == nil {
+		t.Fatal("incomplete record should error")
 	}
 }
 
 func TestCaptureNotInTmux(t *testing.T) {
-	md, _ := setUp(t, "0")
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 9 10 15")
 	t.Setenv("TMUXCAP_NOTMUX", "1")
-	_, err := Capture(md, true)
+	_, err := Capture(logFile, true)
 	if err == nil {
 		t.Fatal("not-in-tmux should error")
 	}
+	if !errors.Is(err, ErrNotInTmux) {
+		t.Fatalf("error should wrap ErrNotInTmux, got: %v", err)
+	}
 	if !strings.Contains(err.Error(), "not in a tmux session") {
 		t.Fatalf("error should mention not in a tmux session, got: %v", err)
+	}
+}
+
+func TestCaptureMissingTmux(t *testing.T) {
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 9 10 15")
+	t.Setenv("PATH", t.TempDir()) // no tmux
+	_, err := Capture(logFile, true)
+	if err == nil {
+		t.Fatal("missing tmux should error")
+	}
+	if !errors.Is(err, ErrNotInTmux) {
+		t.Fatalf("missing-tmux error should wrap ErrNotInTmux, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tmux") {
+		t.Fatalf("error should name tmux, got: %v", err)
 	}
 }

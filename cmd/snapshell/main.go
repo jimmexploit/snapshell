@@ -26,12 +26,19 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 
+	// No auto-generated `completion` command — the setup wizard handles
+	// shell integration and the CLI stays minimal.
+	root.CompletionOptions.DisableDefaultCmd = true
+
 	root.AddCommand(
 		newDaemonCmd(),
 		newStartCmd(),
 		newStopCmd(),
 		newStatusCmd(),
-		newShellhookCmd(),
+		newSetupCmd(),
+		// Hidden plumbing called by the installed shell hook snippets.
+		newHookMarkCmd(),
+		newHookRecordCmd(),
 	)
 
 	return root

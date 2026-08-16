@@ -20,12 +20,12 @@ const BashSnippet = `# --- snapshell shell integration ---
 if command -v snapshell >/dev/null 2>&1; then
   if [ -n "$TMUX" ]; then
     # Inside tmux: record row markers for full prompt+output capture.
-    _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
-    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell shellhook mark --pane "$TMUX_PANE" --phase end)"; }
+    _snapshell_mark_start() { snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
+    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; }
   else
     # No tmux: no row markers — record the command text so Alt+2 can still
     # capture the command line (without output).
-    _snapshell_mark_start() { snapshell shellhook record-command --text "$1"; }
+    _snapshell_mark_start() { snapshell _hook-record --text "$1"; }
     _snapshell_mark_end()   { :; }
   fi
 
@@ -52,7 +52,7 @@ if command -v snapshell >/dev/null 2>&1; then
     _snapshell_debug_chain() {
       [ -z "$COMP_LINE" ] || return 0
       case "$BASH_COMMAND" in
-        ""|_snapshell_*|__bp_*) return 0 ;;
+        ""|:|_snapshell_*|__bp_*|builtin\ *) return 0 ;;
       esac
       # PROMPT_COMMAND from other frameworks (bash-preexec, starship, ...)
       # invokes functions we must not treat as user commands.
@@ -90,10 +90,10 @@ const ZshSnippet = `# --- snapshell shell integration ---
 if (( $+commands[snapshell] )); then
   autoload -Uz add-zsh-hook
   if [ -n "$TMUX" ]; then
-    _snapshell_mark_start() { snapshell shellhook mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
-    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell shellhook mark --pane "$TMUX_PANE" --phase end)"; }
+    _snapshell_mark_start() { snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
+    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; }
   else
-    _snapshell_mark_start() { snapshell shellhook record-command --text "$1"; }
+    _snapshell_mark_start() { snapshell _hook-record --text "$1"; }
     _snapshell_mark_end()   { :; }
   fi
   add-zsh-hook preexec _snapshell_mark_start

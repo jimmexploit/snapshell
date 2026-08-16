@@ -28,13 +28,19 @@ it (the CLI).
 3. Handle IPC requests (`start`, `stop`, `status` per the protocol defined
    in `cmd/snapshell/AGENTS.md`):
    - `start <name>`: reject if a session is already active. Otherwise
-     create `~/snapshell/<name>/` and `~/snapshell/<name>/attachments/` if
+     create `<session_root>/<name>/` and `<session_root>/<name>/attachments/` if
      they don't already exist (idempotent — resuming an existing session
      name is allowed and should pick up the existing attachment count by
-     counting files already in `attachments/`).
-   - `stop`: clear active session state. Hotkeys remain grabbed (daemon
-     keeps running) but their handlers become no-ops with a
-     `notify-send` "no active snapshell session" message.
+     counting files already in `attachments/`). `session_root` comes from
+     the config's `[paths]` (default `~/.local/share/snapshell`).
+     Starting a session also creates `<session_root>/logs/<name>/` and
+     writes the active-session pointer (`~/.local/state/snapshell/
+     activesession`) to that session's `commands.log` path, so the shell
+     hook records every completed command into that session's own log.
+   - `stop`: clear active session state and remove the active-session
+     pointer. Hotkeys remain grabbed (daemon keeps running) but their
+     handlers become no-ops with a `notify-send` "no active snapshell
+     session" message.
    - `status`: report active session name + count of entries appended to
      `blog.md` so far (or "no active session").
 4. On each hotkey firing (delivered from `internal/hotkeys`), dispatch to

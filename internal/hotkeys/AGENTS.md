@@ -20,13 +20,20 @@ Do **not**:
 
 ## Behavior
 
-- Expose a simple interface to the rest of the daemon, e.g.:
+- Expose a simple interface to the rest of the daemon:
   ```go
   type Handler func()
-  func GrabAll(alt1, alt2, alt3 Handler) (unregister func(), err error)
+  func GrabAll(combos map[string]string, handlers map[string]Handler) (unregister func(), err error)
   ```
-  The daemon calls `GrabAll` once at startup with three callbacks and
-  keeps the returned `unregister` func to call on shutdown.
+  `combos` maps a user-facing name (`"screenshot"`, `"code"`, `"note"`) to
+  a friendly combo string like `"Alt+1"`; `handlers` maps the same names
+  to callbacks. The daemon builds both from the config's `[keymaps]`
+  section and keeps the returned `unregister` func to call on shutdown.
+- Combo parsing is pure and unit-testable: `Normalize(combo)` converts a
+  friendly string (`"Alt+Shift+F5"`) into the xgbutil format
+  (`"Mod1-shift-F5"`) plus the required xproto modifier bits, mapping
+  Alt/Meta→Mod1, Ctrl/Control, Shift, Super/Win→Mod4, and raw Mod1..Mod5.
+  The keysym is passed through untouched.
 - If grabbing any of the three keys fails (e.g. already grabbed by
   another application/WM), do not silently continue as if it worked —
   return an error naming which key failed, and have the daemon log it

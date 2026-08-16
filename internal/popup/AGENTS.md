@@ -22,22 +22,30 @@ the captured code text is passed in memory. `zenity` is the only dependency
 
 ## Dialog by mode
 
-- **`image` mode**: `zenity --forms` with a `--text` label describing the
-  captured file (relative path + pixel dimensions read from the PNG header
-  via Go's `image` package — do not render a thumbnail) and a single
-  `--add-entry="Caption (optional)"`. The screenshot is not previewed; a
-  text label ("📷 attachments/003.png — 1920×1040") is sufficient.
-- **`code` mode**: `zenity --forms` with a `--text` label showing a
-  truncated preview of the captured command+output (the full text is what
-  lands in blog.md, the preview is just context — truncate, don't grow the
-  window to the size of a full tmux dump) and a single caption entry.
-- **`note` mode**: `zenity --text-info --editable` — a scrollable text
-  area where the user types the note (zenity 4.x < 4.2 has no
+Every mode is `zenity --text-info --editable`: a scrollable text area that
+fills the window, so the caption/note input is always large enough to see
+everything you type. The mode only changes the `--text` label, the title,
+and the cancel label. Do NOT use `zenity --forms` with `--add-entry` — a
+one-line entry can't grow and zenity leaves the rest of the window as dead
+space (verified against zenity 4.1.90 / libadwaita).
+
+- **`image` mode**: `--text` label describing the captured file (relative
+  path + pixel dimensions read from the PNG header via Go's `image`
+  package — do not render a thumbnail). The screenshot is not previewed; a
+  text label ("📷 attachments/003.png — 1920×1040") is sufficient. The
+  user types the caption in the text area.
+- **`code` mode**: `--text` label showing a truncated preview of the
+  captured command+output (the full text is what lands in blog.md, the
+  preview is just context — truncate, don't grow the window to the size of
+  a full tmux dump). The user types the caption in the text area.
+- **`note` mode**: the text area IS the note. zenity 4.x < 4.2 has no
   `--add-multiline-entry`, so `--text-info --editable` is the multiline
-  input).
+  input.
 - All dialogs get `--width`/`--height` (px) from `[popup].width`/`height`
-  config (0 = let zenity pick), plus a title, `--ok-label=Save` and
-  `--cancel-label=Skip` (note mode: `Discard`).
+  config (0 = let zenity pick); the height sizes the text area. A `--font`
+  (Pango font description) from `[popup].font` is passed when non-empty so
+  the text the user types is comfortably readable. Plus a title,
+  `--ok-label=Save` and `--cancel-label=Skip` (note mode: `Discard`).
 
 Dynamic label text is escaped for Pango markup (`& < >` → entities) since
 zenity parses labels as markup.

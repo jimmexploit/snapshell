@@ -1,23 +1,58 @@
 # AGENTS.md — internal/shellhook
 
 Owns: the bash and zsh integration scripts the user sources in their rc
-file, which write the row-marker files that `internal/capture/tmuxcap`
-reads. This package is mostly **shell scripts, not Go** — the Go side here
-is limited to `snapshell shellhook install` / `snapshell shellhook print
-bash|zsh`, a helper subcommand that prints the snippet for the user to
-paste (or appends it, if they pass a flag) rather than making them hunt
-for a file on disk.
+file, which record command rows that `internal/capture/tmuxcap` reads. This
+package is mostly **shell scripts, not Go** — the Go side here is limited to
+the `Mark` / `RecordCommand` functions the hidden CLI helpers `snapshell
+_hook-mark` and `snapshell _hook-record` wrap (installed by the `snapshell
+setup` wizard).
 
-## Marker file
+## Marker file (working memory)
+
+The hook must remember the *in-progress* command's rows between the start
+and end phases, so it keeps a per-pane marker file as scratch state:
 
 - Location: `~/.local/state/snapshell/markers/<pane_id>.last`
-- Format: two lines, plain text, no JSON needed:
+- Format: three lines, plain text:
   ```
+  <prev_end>
   <start_row>
   <end_row>
   ```
+  `prev_end` is the previous command's end row (`-1` when unknown, i.e. the
+  first command in the pane), `start_row` is the first output row, and
+  `end_row` is `-1` while the command is still running.
 - Written atomically (write to a temp file in the same directory, then
-  rename over the target) so `tmuxcap` never reads a half-written file.
+  rename over the target) so a concurrent reader never sees a half-written
+  file.
+
+## Command log (what Alt+2 actually reads)
+
+On every **completed** command, the hook appends a single line to a command
+log:
+
+- While a session is active, the record goes to **that session's** log at
+  `<session_root>/logs/<name>/commands.log` — the daemon points the hook at
+  it via the `~/.local/state/snapshell/activesession` pointer file (written
+  on `start`, removed on `stop`/shutdown), so each session keeps its own
+  full command history.
+- With no session active, the record falls back to the global
+  `~/.local/state/snapshell/commandlog`.
+- Format: one line per command, newest last, no JSON:
+  ```
+  <pane_id> <prev_end> <start_row> <end_row>
+  ```
+  e.g. `%7 -1 320 328`.
+- Appended only when the command actually completed — never write a record
+  with `end_row == -1`, so an interrupted command (Ctrl-C mid-run, or a
+  DEBUG/PROMPT_COMMAND race) never becomes the "last" command Alt+2
+  captures.
+- Use a single `write(2)` per record (O_APPEND) so a concurrent reader
+  never sees a torn line.
+
+This is the source of truth for Alt+2: `tmuxcap` reads the last line of the
+active session's log, so it always captures the most recently completed
+command regardless of which pane it ran in.
 
 ## bash snippet (conceptual — implement and test against a real bash)
 
@@ -29,12 +64,15 @@ Hook points:
   guard pattern).
 - **After a command finishes, right before the next prompt draws**: hook
   via `PROMPT_COMMAND`.
-- Skip writing a marker if the command that just ran was empty (blank
-  Enter) — compare against `$BASH_COMMAND` / history, don't just always
-  write.
+- Skip recording if the command that just ran was empty (blank Enter) —
+  compare against `$BASH_COMMAND` / history, don't just always write.
 - Only do any of this when `$TMUX` is set — no-op entirely outside tmux
   (cheap early-return, don't add overhead to every prompt for users not
-  in tmux).
+  in tmux). Outside tmux the hook records only the command *text* via
+  `_hook-record` (see below).
+- The DEBUG trap must never treat its own probe commands or other
+  frameworks' probes as user commands (skip `:`, `builtin ...`, `_snapshell_*`,
+  `__bp_*`, and any function name).
 
 ## zsh snippet
 
@@ -51,16 +89,25 @@ _snapshell_row() { tmux display-message -p -t "$TMUX_PANE" '#{cursor_y}'; }
 ```
 And write via the Go binary itself rather than duplicating file-writing
 logic in shell — i.e. the shell hook should shell out to a fast, tiny
-subcommand like `snapshell shellhook mark --pane "$TMUX_PANE" --phase
+subcommand like `snapshell _hook-mark --pane "$TMUX_PANE" --phase
 start|end` that does the actual file write in Go. This keeps the shell
 snippet itself minimal (less to get wrong across bash/zsh/tmux version
-differences) and keeps the marker file format's implementation in one
-place (Go), not duplicated per-shell.
+differences) and keeps the marker/log formats' implementation in one place
+(Go), not duplicated per-shell.
+
+## Plain-shell fallback (no tmux)
+
+`RecordCommand` (wrapped as `snapshell _hook-record`) overwrites
+`~/.local/state/snapshell/lastcommand` with the most recent command's text.
+The daemon falls back to it when Alt+2 fires outside tmux. It must not
+record framework probes (`builtin ...`, DEBUG-trap fragments from other
+prompt frameworks) — those are not user commands.
 
 ## Install instructions
 
-`snapshell shellhook print bash` / `print zsh` outputs the exact lines to
-add, with a comment header like:
+The `snapshell setup` wizard appends the snippet (via the CLI's internal
+`installHook`, which refuses to double-append). The snippet carries a
+comment header like:
 ```
 # --- snapshell shell integration ---
 # add this near the end of your .bashrc / .zshrc
@@ -72,9 +119,9 @@ already-open panes.
 
 ## What NOT to do here
 
-- Don't try to parse or store the command *text* itself in the marker
-  file — only row numbers. The command text is already visible in the
-  captured pane output (it's the prompt line), no need to duplicate it.
-- Don't make the shell hook depend on the daemon being running — it
-  should work (write marker files) regardless of daemon state; the daemon
-  just reads them later when Alt+2 fires.
+- Don't try to parse or store the command *text* itself in the marker file
+  or command log — only row numbers. The command text is already visible in
+  the captured pane output (it's the prompt line), no need to duplicate it.
+- Don't make the shell hook depend on the daemon being running — it should
+  work (write markers / the command log) regardless of daemon state; the
+  daemon just reads them later when Alt+2 fires.

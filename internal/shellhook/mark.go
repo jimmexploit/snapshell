@@ -15,6 +15,14 @@ import (
 // it at a temp dir.
 var markersDir = daemon.MarkersDir
 
+// commandLogPath resolves the append-only command log; a variable so tests
+// can point it at a temp dir.
+var commandLogPath = daemon.CommandLogPath
+
+// activeSessionPath resolves the daemon's active-session pointer; a
+// variable so tests can point it at a temp file. See daemon.ActiveSessionPath.
+var activeSessionPath = daemon.ActiveSessionPath
+
 // Mark records tmux row positions for a pane into its marker file and
 // returns the recorded absolute row.
 //
@@ -67,10 +75,46 @@ func Mark(pane, phase, prevEnd string) (int, error) {
 			// hook skipped phase start). Nothing to complete.
 			return -1, nil
 		}
+		if err := appendCommandLog(pane, prev, start, abs); err != nil {
+			return 0, fmt.Errorf("mark end: record command log: %w", err)
+		}
 		return abs, writeAtomic(path, fmt.Sprintf("%d\n%d\n%d\n", prev, start, abs))
 	default:
 		return 0, fmt.Errorf("mark: phase must be start or end, got %q", phase)
 	}
+}
+
+// appendCommandLog records a completed command so Alt+2 captures the most
+// recently completed command regardless of which pane it ran in. While a
+// session is active the record goes to that session's command log
+// (<session_root>/logs/<name>/commands.log, resolved via the daemon's
+// active-session pointer) so each session keeps its own full command
+// history; with no active session it falls back to the global log.
+// Degenerate records (unstarted, or end still -1) are skipped so an
+// interrupted command never pollutes a log.
+func appendCommandLog(pane string, prev, start, end int) error {
+	if start < 0 || end == -1 || end < start {
+		return nil
+	}
+	path := activeSessionLog()
+	if path == "" {
+		path = commandLogPath()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return appendWrite(path, fmt.Sprintf("%s %d %d %d\n", pane, prev, start, end))
+}
+
+// activeSessionLog returns the resolved command-log path of the active
+// session (written by the daemon on `start`, removed on `stop`), or "" when
+// no session is active.
+func activeSessionLog() string {
+	data, err := os.ReadFile(activeSessionPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // RecordCommand stores the most recent command's text for the plain-shell
@@ -164,4 +208,16 @@ func writeAtomic(path, content string) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// appendWrite appends content to path (creating it if needed). One single
+// write so a concurrent reader never observes a torn record.
+func appendWrite(path, content string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
+	return err
 }

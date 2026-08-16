@@ -18,11 +18,24 @@ snapshell stop               end the active session
 snapshell status             print active session name + item count, or
                             "no active session"
 
-snapshell shellhook print|install bash|zsh
-                            manage the shell integration (plus hidden
-                            helpers mark / record-command that the hooks
-                            call — see internal/shellhook/AGENTS.md)
+snapshell setup              interactive wizard: check/install
+                            dependencies, install the shell hook, create
+                            or reset the config file. Also runs
+                            automatically on the first `snapshell start`
+                            when the config file does not exist AND stdin
+                            is a TTY (never in scripts/pipes).
+                            When the config already exists it asks whether
+                            to reset it to defaults (backing it up to
+                            config.toml.bak) and otherwise points the user
+                            at its location.
+
+Hidden plumbing (not shown in help, called by the installed shell hook):
+snapshell _hook-mark         record a tmux row marker
+snapshell _hook-record       record the last command's text
 ```
+
+There is no `shellhook` command (the setup wizard owns hook install) and no
+`completion` command (`root.CompletionOptions.DisableDefaultCmd = true`).
 
 Use a real CLI library (`github.com/spf13/cobra` is fine) so `--help`
 output is generated for free. Every subcommand needs a one-line

@@ -43,14 +43,20 @@ make check          # fmt + vet + tests
 make uninstall      # remove the installed binary
 ```
 
-The shell hook is installed per shell:
+### Interactive setup wizard
+
+On the first `snapshell start <name>` (when no config file exists yet) a
+one-time wizard walks you through a few Y/n questions: installing missing
+dependencies, adding the shell hook, and creating the default config. Run
+it again any time with:
 
 ```sh
-snapshell shellhook install bash    # appends the hook to ~/.bashrc
-snapshell shellhook install zsh     # appends the hook to ~/.zshrc
-# or just print it to review first:
-snapshell shellhook print bash
+snapshell setup
 ```
+
+If the config already exists, `snapshell setup` asks whether you want to
+reset it to defaults (the old one is backed up to `config.toml.bak`) or
+keep it and be shown where it lives for editing.
 
 > After installing the hook, **start a new shell/tmux pane**. Hooks are
 > sourced at shell startup and don't apply retroactively to open shells.
@@ -60,8 +66,8 @@ snapshell shellhook print bash
 ## Quick start
 
 ```sh
-# 1. install the shell hook (once, per shell) and open a new shell
-snapshell shellhook install bash
+# 1. (first run only) the wizard runs automatically — or run it yourself
+snapshell setup
 
 # 2. start a session — this also starts the daemon in the background
 snapshell start acme-box
@@ -70,12 +76,13 @@ snapshell start acme-box
 #    Alt+1  screenshot
 #    Alt+2  capture the last command (and its output)
 #    Alt+3  raw note
+#    (redefine any of these in ~/.config/snapshell/config.toml → [keymaps])
 
 # 4. when done
 snapshell stop
 
 # 5. your documentation lives in a portable folder
-ls ~/snapshell/acme-box/     # blog.md + attachments/
+ls ~/.local/share/snapshell/acme-box/   # blog.md + attachments/
 ```
 
 Start another session with a new name anytime. Only **one session is
@@ -121,12 +128,14 @@ the attachment numbering).
   the command's *text* instead of row markers, and Alt+2 falls back to
   that. You get the command line (a notification explains that full
   output capture needs tmux).
-- **Captions in a zenity window.** After each capture a small zenity
-  dialog pops up: a caption field for screenshots and commands, or a
-  multi-line text box for notes. Save appends the entry with your caption;
-  Skip (or Esc) appends screenshots/commands without one and discards
-  notes. The dialog runs in its own capture goroutine, so leaving it open
-  never blocks the next hotkey.
+- **Captions in a zenity window.** After each capture a zenity dialog
+  pops up. Every mode uses a scrollable text area that fills the window,
+  so the caption/note box is big enough to see everything you type: a
+  caption box for screenshots and commands, a note box for Alt+3. Save
+  appends the entry with your caption; Skip (or Esc) appends
+  screenshots/commands without one and discards notes. The dialog runs in
+  its own capture goroutine, so leaving it open never blocks the next
+  hotkey.
 - **The blog file.** Each entry is appended to the session's `blog.md`:
   a hidden timestamp comment, an optional bold caption, then the
   screenshot (`![](attachments/NNN.png)`) or a ```console``` code block
@@ -137,11 +146,16 @@ the attachment numbering).
 
 ## Hotkeys
 
-| Hotkey | Action |
-| ------ | ------ |
-| Alt+1  | Screenshot → `attachments/NNN.png` → caption → image entry |
-| Alt+2  | Last tmux command + full output (or last command text) → caption → code entry |
-| Alt+3  | Raw note → paragraph entry |
+The hotkeys are grabbed globally (they work in any window) and are defined
+in `~/.config/snapshell/config.toml` under `[keymaps]` — the defaults are
+shown below. Combos use `Alt` (Mod1), `Ctrl`, `Shift`, or `Super` (Mod4),
+plus any key: `Ctrl+F9`, `Super+space`, etc.
+
+| Hotkey   | Action |
+| -------- | ------ |
+| Alt+1    | Screenshot → `attachments/NNN.png` → caption → image entry |
+| Alt+2    | Last tmux command + full output (or last command text) → caption → code entry |
+| Alt+3    | Raw note → paragraph entry |
 
 In the caption dialog, an empty submit or **Skip/Esc**:
 - image/code: the entry is still appended, just without a caption;
@@ -162,14 +176,21 @@ documented inline:
   tool = "flameshot"        # "flameshot" or "mate-screenshot"
 
 [popup]
-  width = 560              # caption window size in pixels (0 = let zenity pick)
-  height = 320
+  width = 560              # caption window width in pixels (0 = let zenity pick)
+  height = 320             # caption/note text area height in pixels (0 = let zenity pick)
+  font = "Sans 13"         # font of the text you type (Pango description, "" = zenity default)
 
 [capture]
   include_output = true     # false = Alt+2 captures only the command line, no output
 
+[keymaps]
+  screenshot = "Alt+1"     # global hotkeys — modifiers + key
+  command    = "Alt+2"     # Alt (Mod1), Ctrl, Shift, Super (Mod4),
+  note       = "Alt+3"     # or raw Mod1..Mod5; key = letter/number/F1-F12/...
+
 [paths]
-  session_root = "~/snapshell"
+  # where sessions are stored; change to any writable path
+  session_root = "~/.local/share/snapshell"
 ```
 
 Partial files are fine — missing keys get defaults. `~` is expanded in
@@ -187,7 +208,7 @@ falls back through a sensible list and logs which one it used.
     daemon.sock, daemon.pid           IPC socket + PID file
     markers/<pane>.last               tmux row markers (shell hook)
     lastcommand                       recorded command text (plain-shell fallback)
-~/snapshell/<session>/                each session's folder
+~/.local/share/snapshell/<session>/        each session's folder
     blog.md                           the documentation, append-only
     attachments/                      screenshots (NNN.png)
 ```
@@ -217,7 +238,7 @@ grab hotkeys). With the unit active you don't need the auto-launch from
   owns the key combo. Stop/restart the daemon after it has fully exited.
 - **"no command captured yet — check that the snapshell shell hook is
   sourced"**: the shell hook isn't installed, or the shell predates the
-  install. Run `snapshell shellhook install <shell>` and open a new shell.
+  install. Run `snapshell setup` and open a new shell.
 - **Alt+2 captures nothing in tmux.** Run at least one command first (the
   marker for the first command in a fresh pane is an edge case), and make
   sure the hook is active in that pane.

@@ -27,3 +27,26 @@ func MarkersDir() string { return filepath.Join(StateDir(), "markers") }
 // recent command's text. Outside tmux (no row markers possible) Alt+2
 // falls back to this.
 func LastCommandPath() string { return filepath.Join(StateDir(), "lastcommand") }
+
+// CommandLogPath returns the append-only log where the shell hook records
+// every completed command across every tmux pane. One line per command,
+// newest last:
+//
+//	<pane_id> <prev_end> <start> <end>
+//
+// Alt+2 reads the last line, so it always captures the most recently
+// completed command regardless of which pane it ran in.
+//
+// This is the fallback used when no session is active. While a session is
+// active the shell hook appends to that session's log instead
+// (SessionLogPath, tracked via ActiveSessionPath) so each session keeps its
+// own full command history under ~/.local/share/snapshell/logs/<name>/.
+func CommandLogPath() string { return filepath.Join(StateDir(), "commandlog") }
+
+// ActiveSessionPath is a pointer file the daemon writes when a session
+// starts and removes when it stops/shuts down. Its contents are the
+// resolved command-log path of the active session, so the shell hook (which
+// runs in the user's shells, outside the daemon) knows where to append
+// command records without needing to resolve session_root itself. Empty or
+// missing means no session is active.
+func ActiveSessionPath() string { return filepath.Join(StateDir(), "activesession") }

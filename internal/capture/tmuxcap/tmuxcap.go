@@ -1,13 +1,18 @@
 package tmuxcap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// ErrNotInTmux reports that tmux isn't available or isn't attached, so the
+// command-log row capture is impossible and the caller should fall back to
+// the shell hook's plain-shell recorded command.
+var ErrNotInTmux = errors.New("not in a tmux session")
 
 // Result describes a completed tmux capture.
 type Result struct {
@@ -18,36 +23,41 @@ type Result struct {
 	Text string
 }
 
-// Capture returns the exact text of the last completed command (and, when
-// includeOutput is true, its output) from the focused tmux pane.
+// Capture returns the exact text of the most recently completed command
+// (and, when includeOutput is true, its output), from whichever pane it
+// ran in.
 //
-// markerDir is the directory holding the per-pane <pane_id>.last marker
-// files written by the shell hook (internal/shellhook). The daemon passes
-// its own state-derived markers dir.
+// commandLog is the append-only log the shell hook writes on every
+// completed command, one line per command (newest last):
 //
-// The marker file holds three absolute rows (history_size + cursor_y):
-// prev_end (the row where the current prompt started, or -1 when unknown),
-// start (the first output row), and end (the next prompt row). Empirically
-// the start row is one below the last prompt line, because the terminal
-// echoes the accepted newline before preexec/DEBUG fires, and the end row
-// is one past the last output line. So with a known prev_end the capture
-// begins at the top of the (possibly multi-line) prompt, and with
-// includeOutput the capture runs to the last output line. When prev_end is
-// unknown (first command in the pane) it falls back to start-1 — the last
-// prompt line, which is where the command was typed on a single-line
-// prompt.
-func Capture(markerDir string, includeOutput bool) (Result, error) {
-	pane, err := FocusedPane()
-	if err != nil {
-		return Result{}, err
+//	<pane_id> <prev_end> <start> <end>
+//
+// The rows are absolute (history_size + cursor_y): prev_end is where the
+// current prompt started (or -1 when unknown), start is the first output
+// row, and end is the next prompt row. Empirically the start row is one
+// below the last prompt line, because the terminal echoes the accepted
+// newline before preexec/DEBUG fires, and the end row is one past the last
+// output line. So with a known prev_end the capture begins at the top of
+// the (possibly multi-line) prompt, and with includeOutput the capture runs
+// to the last output line. When prev_end is unknown (first command in the
+// pane) it falls back to start-1 — the last prompt line, which is where the
+// command was typed on a single-line prompt.
+//
+// Alt+2 reads the last log line, so it captures the most recently completed
+// command regardless of which pane ran it — no focus resolution and no
+// per-pane marker scanning, which are unreliable when the daemon/opencode
+// runs in a different pane than the command shell.
+func Capture(commandLog string, includeOutput bool) (Result, error) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return Result{}, fmt.Errorf("%w: tmux not found on PATH", ErrNotInTmux)
 	}
 
-	prev, start, end, err := readMarker(markerDir, pane)
+	pane, prev, start, end, err := lastCommandRecord(commandLog)
 	if err != nil {
 		return Result{}, err
 	}
-	if start < 1 || end < start {
-		return Result{}, fmt.Errorf("marker for pane %s is degenerate (%d..%d) — rerun a command and try again", pane, start, end)
+	if start < 0 || end == -1 || end < start {
+		return Result{}, fmt.Errorf("command log record for pane %s is degenerate (%d..%d) — rerun a command and try again", pane, start, end)
 	}
 
 	from := start - 1
@@ -71,63 +81,41 @@ func Capture(markerDir string, includeOutput bool) (Result, error) {
 	return Result{Text: text}, nil
 }
 
-// FocusedPane resolves the tmux pane to capture from.
-//
-// The daemon runs outside any tmux client, so display-message without -t
-// reports the pane of the tmux session most recently active (limitation
-// noted in internal/capture/tmuxcap/AGENTS.md — if multiple clients are
-// attached to different sessions, "the" focused pane isn't cleanly
-// resolvable from a non-client; most-recently-active is the documented
-// fallback).
-func FocusedPane() (string, error) {
-	bin, err := exec.LookPath("tmux")
-	if err != nil {
-		return "", fmt.Errorf("tmux not found on PATH")
-	}
-	out, err := exec.Command(bin, "display-message", "-p", "#{pane_id}").Output()
-	if err != nil {
-		return "", fmt.Errorf("not in a tmux session (tmux display-message failed: %v) — open a tmux window first", err)
-	}
-	pane := strings.TrimSpace(string(out))
-	if pane == "" {
-		return "", fmt.Errorf("not in a tmux session — open a tmux window first")
-	}
-	return pane, nil
-}
-
-// readMarker parses the <pane>.last marker file into prev, start and end
-// rows. A missing marker means the user pressed Alt+2 before running any
-// command (or the hook isn't sourced) — that gets a specific, actionable
-// message.
-func readMarker(markerDir, pane string) (prev, start, end int, err error) {
-	prev = -1
-	data, err := os.ReadFile(filepath.Join(markerDir, pane+".last"))
+// lastCommandRecord returns the pane and absolute rows of the most recently
+// completed command from the append-only command log. Invalid/torn lines
+// are skipped in favor of the previous valid record. A missing or empty log
+// means no command has completed since the hook was installed (or it isn't
+// sourced) — that gets a specific, actionable message.
+func lastCommandRecord(path string) (pane string, prev, start, end int, err error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, 0, 0, fmt.Errorf("no command captured yet for pane %s — check that the snapshell shell hook is sourced in your shell rc file", pane)
+			return "", 0, 0, 0, fmt.Errorf("no command captured yet — check that the snapshell shell hook is sourced in your shell rc file")
 		}
-		return 0, 0, 0, fmt.Errorf("read marker for pane %s: %v", pane, err)
+		return "", 0, 0, 0, fmt.Errorf("read command log: %v", err)
 	}
-
-	fields := strings.Fields(string(data))
-	if len(fields) < 2 {
-		return 0, 0, 0, fmt.Errorf("marker for pane %s is incomplete: %q", pane, strings.TrimSpace(string(data)))
-	}
-	if len(fields) >= 3 {
-		prev, err = strconv.Atoi(fields[0])
-		if err != nil {
-			return 0, 0, 0, fmt.Errorf("bad prev row %q in marker for pane %s", fields[0], pane)
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		fields := strings.Fields(lines[i])
+		if len(fields) != 4 {
+			continue
 		}
+		vals := make([]int, 3)
+		ok := true
+		for j, f := range fields[1:] {
+			n, e := strconv.Atoi(f)
+			if e != nil {
+				ok = false
+				break
+			}
+			vals[j] = n
+		}
+		if !ok {
+			continue
+		}
+		return fields[0], vals[0], vals[1], vals[2], nil
 	}
-	start, err = strconv.Atoi(fields[len(fields)-2])
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("bad start row %q in marker for pane %s", fields[len(fields)-2], pane)
-	}
-	end, err = strconv.Atoi(fields[len(fields)-1])
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("bad end row %q in marker for pane %s", fields[len(fields)-1], pane)
-	}
-	return prev, start, end, nil
+	return "", 0, 0, 0, fmt.Errorf("no command captured yet — check that the snapshell shell hook is sourced in your shell rc file")
 }
 
 // historySize returns the pane's current scrollback line count, needed to
@@ -135,7 +123,7 @@ func readMarker(markerDir, pane string) (prev, start, end int, err error) {
 func historySize(pane string) (int, error) {
 	out, err := exec.Command("tmux", "display-message", "-p", "-t", pane, "#{history_size}").Output()
 	if err != nil {
-		return 0, fmt.Errorf("tmux display-message history_size for %s: %v", pane, err)
+		return 0, fmt.Errorf("%w (tmux display-message failed for %s: %v)", ErrNotInTmux, pane, err)
 	}
 	hs, err := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil {

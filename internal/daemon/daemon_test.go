@@ -90,6 +90,20 @@ func TestSessionLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sessionRoot, "acme", "attachments")); err != nil {
 		t.Fatalf("attachments dir not created: %v", err)
 	}
+	// The active-session pointer points the shell hook at this session's
+	// command log under <session_root>/logs/<name>/commands.log.
+	pointerPath := filepath.Join(stateDir, "activesession")
+	pointer, err := os.ReadFile(pointerPath)
+	if err != nil {
+		t.Fatalf("read activesession pointer: %v", err)
+	}
+	wantLog := filepath.Join(sessionRoot, "logs", "acme", "commands.log")
+	if string(pointer) != wantLog {
+		t.Fatalf("activesession = %q, want %q", string(pointer), wantLog)
+	}
+	if _, err := os.Stat(filepath.Dir(wantLog)); err != nil {
+		t.Fatalf("session log dir not created: %v", err)
+	}
 
 	// A second start while active must fail and not switch sessions.
 	resp = send(t, sockPath, Request{Cmd: CmdStart, Args: map[string]string{"name": "acme"}})
@@ -111,6 +125,10 @@ func TestSessionLifecycle(t *testing.T) {
 	resp = send(t, sockPath, Request{Cmd: CmdStop})
 	if !resp.OK {
 		t.Fatalf("stop should succeed, got %+v", resp)
+	}
+	// Stopping clears the active-session pointer.
+	if _, err := os.Stat(pointerPath); !os.IsNotExist(err) {
+		t.Fatalf("activesession pointer should be removed on stop")
 	}
 	resp = send(t, sockPath, Request{Cmd: CmdStart, Args: map[string]string{"name": "acme"}})
 	if !resp.OK || !strings.Contains(resp.Message, "resumed") {
@@ -136,12 +154,15 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatal("daemon did not exit after daemon_stop")
 	}
 
-	// PID and socket files must be cleaned up.
+	// PID, socket, and active-session pointer files must be cleaned up.
 	if _, err := os.Stat(filepath.Join(stateDir, "daemon.pid")); !os.IsNotExist(err) {
 		t.Fatalf("pid file not removed")
 	}
 	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
 		t.Fatalf("socket file not removed")
+	}
+	if _, err := os.Stat(pointerPath); !os.IsNotExist(err) {
+		t.Fatalf("activesession pointer not removed on shutdown")
 	}
 }
 

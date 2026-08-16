@@ -20,6 +20,7 @@ type Config struct {
 	Screenshot ScreenshotConfig `toml:"screenshot"`
 	Capture    CaptureConfig    `toml:"capture"`
 	Popup      PopupConfig      `toml:"popup"`
+	Keymaps    KeymapConfig     `toml:"keymaps"`
 	Paths      PathsConfig      `toml:"paths"`
 }
 
@@ -40,9 +41,14 @@ type CaptureConfig struct {
 
 // PopupConfig configures the zenity caption/note window.
 type PopupConfig struct {
-	// Width/Height size the caption window in pixels (0 = let zenity pick).
-	Width  int `toml:"width"`
+	// Width sizes the caption window in pixels (0 = let zenity pick).
+	Width int `toml:"width"`
+	// Height sizes the caption/note text area in pixels (0 = let zenity
+	// pick) — every popup input is a text area that fills the window.
 	Height int `toml:"height"`
+	// Font is a Pango font description (e.g. "Sans 13") for the text area
+	// the user types into. Empty = zenity's default font.
+	Font string `toml:"font"`
 }
 
 // PathsConfig configures where session folders live.
@@ -50,16 +56,25 @@ type PathsConfig struct {
 	SessionRoot string `toml:"session_root"`
 }
 
-// Default returns the built-in configuration values. SessionRoot is kept as
-// "~/snapshell" here; callers must expand it (Load expands it for
-// file-based configs).
+// KeymapConfig configures the global hotkeys. Values are user-friendly
+// combos like "Alt+1" or "Ctrl+Shift+F5"; Alt = Mod1, Ctrl = Control,
+// Super/Win = Mod4 (the raw Mod1..Mod5 names are accepted too).
+type KeymapConfig struct {
+	Screenshot string `toml:"screenshot"`
+	Command    string `toml:"command"`
+	Note       string `toml:"note"`
+}
+
+// Default returns the built-in configuration values. SessionRoot is the
+// per-user location sessions land in (a leading "~/" is expanded by Load).
 func Default() *Config {
 	includeOutput := true
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
 		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
-		Popup:      PopupConfig{Width: 560, Height: 320},
-		Paths:      PathsConfig{SessionRoot: "~/snapshell"},
+		Popup:      PopupConfig{Width: 560, Height: 320, Font: "Sans 13"},
+		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3"},
+		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 	}
 }
 
@@ -114,6 +129,25 @@ func LoadFrom(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// ResetDefault backs up the current config file (if any) to <path>.bak and
+// writes a fresh default config in its place. Used by the setup wizard when
+// the user asks to reset their configuration.
+func ResetDefault() error {
+	path, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		if err := os.Rename(path, path+".bak"); err != nil {
+			return fmt.Errorf("backup config to %s.bak: %v", path, err)
+		}
+	}
+	if err := writeDefault(path); err != nil {
+		return fmt.Errorf("write default config %s: %v", path, err)
+	}
+	return nil
+}
+
 // expandCfg normalizes path values (leading ~/) in a loaded config.
 func expandCfg(c *Config) {
 	c.Paths.SessionRoot = expandPath(c.Paths.SessionRoot)
@@ -146,17 +180,35 @@ const defaultFileText = `# snapshell configuration
   tool = "flameshot"        # "flameshot" or "mate-screenshot"
 
 [popup]
-  # Size of the caption window in pixels. 0 = let zenity pick.
+  # Width of the caption window in pixels. 0 = let zenity pick.
   width = 560
+  # Height of the caption/note text area in pixels — every popup input is
+  # a text area that fills the window, so this sizes the box you type in.
+  # 0 = let zenity pick.
   height = 320
+  # Font of the text you type (Pango font description). Empty = zenity's
+  # default. "Sans 13" is a comfortable step up from the 10pt desktop font.
+  font = "Sans 13"
 
 [capture]
   # false = Alt+2 captures only the command line (and its prompt lines),
   # skipping the command's output.
   include_output = true
 
+[keymaps]
+  # Global hotkeys. Format: modifiers separated by "+", then a key.
+  # Alt = Mod1, Ctrl = Control, Shift, Super/Win = Mod4; raw Mod1..Mod5
+  # names work too. The key is any X11 keysym (a letter, number, F1-F12,
+  # Return, space, ...).
+  screenshot = "Alt+1"
+  command    = "Alt+2"
+  note       = "Alt+3"
+
 [paths]
-  session_root = "~/snapshell"
+  # Where session folders (and their blog.md + attachments/) are stored.
+  # "~/.local/share/snapshell" is the default (always writable); you can
+  # use any path you have write access to (e.g. "~/snapshell").
+  session_root = "~/.local/share/snapshell"
 `
 
 // fillDefaults replaces empty/zero values with the built-in defaults.
@@ -173,6 +225,15 @@ func fillDefaults(c *Config) {
 	}
 	if c.Popup.Height <= 0 {
 		c.Popup.Height = def.Popup.Height
+	}
+	if strings.TrimSpace(c.Keymaps.Screenshot) == "" {
+		c.Keymaps.Screenshot = def.Keymaps.Screenshot
+	}
+	if strings.TrimSpace(c.Keymaps.Command) == "" {
+		c.Keymaps.Command = def.Keymaps.Command
+	}
+	if strings.TrimSpace(c.Keymaps.Note) == "" {
+		c.Keymaps.Note = def.Keymaps.Note
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot

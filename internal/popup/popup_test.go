@@ -106,19 +106,28 @@ func TestApplyUnknownMode(t *testing.T) {
 }
 
 func TestZenityArgsImage(t *testing.T) {
-	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300)
+	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300, "Sans 14")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"--forms", "--width", "520", "--height", "300",
-		"--add-entry=Caption (optional)", "--ok-label=Save", "--cancel-label=Skip"} {
+	// The caption input is a text area (--text-info --editable) that fills
+	// the window, so the user can see everything they type.
+	for _, want := range []string{"--text-info", "--editable", "--width", "520", "--height", "300",
+		"--font", "Sans 14", "--ok-label=Save", "--cancel-label=Skip"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("image args missing %q: %v", want, args)
 		}
 	}
 }
 
+func TestZenityArgsNoFontWhenEmpty(t *testing.T) {
+	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300, "")
+	if strings.Contains(strings.Join(args, " "), "--font") {
+		t.Fatalf("empty font must not emit --font: %v", args)
+	}
+}
+
 func TestZenityArgsCodeTruncatesPreview(t *testing.T) {
 	long := strings.Repeat("x", 500)
-	args := zenityArgs(ModeCode, "", "", long, 0, 0)
+	args := zenityArgs(ModeCode, "", "", long, 0, 0, "")
 	found := false
 	for _, a := range args {
 		if strings.HasPrefix(a, "--text=") {
@@ -134,9 +143,10 @@ func TestZenityArgsCodeTruncatesPreview(t *testing.T) {
 }
 
 func TestZenityArgsNote(t *testing.T) {
-	args := zenityArgs(ModeNote, "", "", "", 560, 400)
+	args := zenityArgs(ModeNote, "", "", "", 560, 400, "Sans 13")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"--text-info", "--editable", "--ok-label=Save", "--cancel-label=Discard"} {
+	for _, want := range []string{"--text-info", "--editable", "--font", "Sans 13",
+		"--ok-label=Save", "--cancel-label=Discard"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("note args missing %q: %v", want, args)
 		}
