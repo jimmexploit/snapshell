@@ -1,6 +1,9 @@
 # Build artifacts
 /bin/
 /snapshell
+AGENTS.md
+changes.md
+config_references.md
 
 # Editor/OS cruft
 *.swp
