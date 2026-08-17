@@ -29,6 +29,13 @@ snapshell setup              interactive wizard: check/install
                             config.toml.bak) and otherwise points the user
                             at its location.
 
+snapshell list-fonts         list every font family on the system so the
+                            user can pick a [popup].font value (e.g.
+                            "JetBrains Mono 13"). Runs fc-list and prints
+                            the sorted, deduplicated family names; the
+                            generic Pango families (Sans/Serif/Monospace)
+                            are always included.
+
 Hidden plumbing (not shown in help, called by the installed shell hook):
 snapshell _hook-mark         record a tmux row marker
 snapshell _hook-record       record the last command's text
@@ -36,6 +43,10 @@ snapshell _hook-record       record the last command's text
 
 There is no `shellhook` command (the setup wizard owns hook install) and no
 `completion` command (`root.CompletionOptions.DisableDefaultCmd = true`).
+`list-fonts` is the one command that does not talk to the daemon: it is a
+read-only system query (`fc-list`), so it works even when the daemon is
+stopped — and it must fail with a named "fc-list not found on PATH" error
+when fontconfig is absent, never a raw exec error.
 
 Use a real CLI library (`github.com/spf13/cobra` is fine) so `--help`
 output is generated for free. Every subcommand needs a one-line

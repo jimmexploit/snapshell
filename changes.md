@@ -213,3 +213,8 @@ independently; a checkmark means done and verified.
       dash and no "add " prefix. Alt+4's selection flow now has its own
       mode (shares code mode's dialog and discard semantics, distinct
       title).
+- [x] **23. `snapshell list-fonts`** — new subcommand that lists every font
+      family on the system (via fc-list, sorted + deduplicated, with the
+      generic Sans/Serif/Monospace Pango families always included) so the
+      user can pick a value for `[popup].font`. Works without the daemon.
+      Missing fc-list errors with a named install hint.
