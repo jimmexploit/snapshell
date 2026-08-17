@@ -25,6 +25,17 @@ const (
 	ModeNote  = "note"
 )
 
+// zenityExtraExit is zenity's documented exit code when an extra button
+// (see --extra-button) is clicked rather than OK or Cancel. Real zenity
+// 4.1.90 does NOT honour it for --text-info dialogs — it exits 1 with the
+// button's label on stdout instead — so detection also checks the stdout
+// content; see resultFromExit.
+const zenityExtraExit = 5
+
+// extraButtonLabel is the --extra-button label used by code mode. When it
+// is clicked, zenity prints this exact string to stdout.
+const extraButtonLabel = "Cancel"
+
 // Result carries what the form produced.
 type Result struct {
 	// Text is the caption (image/code modes) or the note text (note mode),
@@ -33,6 +44,10 @@ type Result struct {
 	// Submitted is true when the user pressed the save button; false when
 	// they cancelled, closed the window, or it timed out.
 	Submitted bool
+	// Aborted is true only when the user pressed the extra "Cancel" button
+	// (image/code modes): the capture is discarded entirely — for an image
+	// the screenshot file is deleted too — no entry appended.
+	Aborted bool
 }
 
 // Capture shows the caption/note window for a capture and appends the
@@ -49,7 +64,10 @@ type Result struct {
 // Empty or cancelled submit = "skip caption" for image/code (the entry is
 // still appended — losing an already-taken screenshot because the caption
 // window was dismissed would be a bad outcome) but discards note mode
-// entirely, since nothing was captured yet beyond the text itself.
+// entirely, since nothing was captured yet beyond the text itself. Image
+// and code modes additionally offer a "Cancel" button that aborts the
+// whole capture — for a screenshot the captured file is deleted too — the
+// only path where a dismissed dialog loses the capture.
 //
 // Capture returns an error only on an infrastructure failure (zenity
 // missing, dialog failed to launch) — in that case nothing is appended and
@@ -79,10 +97,24 @@ func askDialog(mode, sessionDir, file, text string, width, height int, font stri
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
 	}
-	// zenity exits 0 on the OK/save button and 1 on cancel/Esc; anything
-	// else (timeout, crash) is treated as cancelled — still a no-op for
-	// image/code, a discard for notes.
-	return Result{Text: strings.TrimSpace(out.String()), Submitted: code == 0}, nil
+	return resultFromExit(code, out.String()), nil
+}
+
+// resultFromExit maps a zenity exit code and stdout to a Result, keeping
+// the pure code→result mapping unit-testable. zenity exits 0 on the
+// OK/save button (stdout holds the edited caption text) and 1 on
+// cancel/Esc (here the "Skip"/"Discard" button). An extra button is
+// documented to exit 5, but real zenity 4.1.90 exits 1 and prints the
+// button's label to stdout — so the abort signal is "non-zero exit AND
+// stdout is exactly the extra-button label". Any other non-zero code
+// (timeout, crash) is treated as a plain cancel.
+func resultFromExit(code int, out string) Result {
+	text := strings.TrimSpace(out)
+	aborted := code == zenityExtraExit || (code != 0 && text == extraButtonLabel)
+	if aborted {
+		return Result{Text: text, Aborted: true}
+	}
+	return Result{Text: text, Submitted: code == 0}
 }
 
 // zenityArgs builds the zenity argv for a mode.
@@ -111,6 +143,10 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 			"--text="+escapeMarkup(label),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
+			// Same three-button contract as code mode: Save keeps it with a
+			// caption, Skip keeps it without, Cancel deletes the screenshot
+			// and adds nothing.
+			"--extra-button=Cancel",
 		)
 	case ModeCode:
 		return append(args, "--text-info", "--editable",
@@ -118,6 +154,10 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 			"--text="+escapeMarkup(truncatePreview(text)),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
+			// The one "discard the capture entirely" path for code mode:
+			// Save keeps it with a caption, Skip keeps it without, Cancel
+			// throws it away (no blog.md entry).
+			"--extra-button=Cancel",
 		)
 	case ModeNote:
 		return append(args, "--text-info", "--editable",
@@ -141,8 +181,20 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 func applyResult(mode string, res Result, file, text, sessionDir string) error {
 	switch mode {
 	case ModeImage:
+		if res.Aborted {
+			// The user pressed Cancel: discard the whole capture, including
+			// the screenshot already written to attachments/. A cancelled
+			// capture must leave no trace — not even a stray file.
+			if err := os.Remove(filepath.Join(sessionDir, file)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove cancelled screenshot: %w", err)
+			}
+			return nil
+		}
 		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindImage, Caption: res.Text, ImagePath: file})
 	case ModeCode:
+		if res.Aborted {
+			return nil // the user pressed Cancel: discard the capture
+		}
 		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindCode, Caption: res.Text, CodeText: text})
 	case ModeNote:
 		if !res.Submitted || strings.TrimSpace(res.Text) == "" {

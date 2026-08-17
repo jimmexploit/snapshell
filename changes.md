@@ -175,3 +175,17 @@ independently; a checkmark means done and verified.
       falling back to the clipboard when nothing is selected. Both empty →
       a notification, no entry. The captured text goes through the same
       caption popup + language-tagged blog.md append as Alt+2.
+- [x] **18. Cancel button for code captures** — the Alt+2/Alt+4 caption
+      popup now has a third button, Cancel (zenity `--extra-button`):
+      Save keeps the entry with a caption, Skip keeps it without, Cancel
+      discards the capture entirely (no blog.md entry). Verified against
+      zenity 4.1.90: the documented exit code 5 for extra buttons is NOT
+      what real zenity emits — it exits 1 and prints the button label to
+      stdout, so `resultFromExit` aborts on (exit==5) or (exit!=0 and
+      stdout==label).
+- [x] **19. Cancel button for screenshots too** — the Alt+1 image popup now
+      has the same three buttons as code captures: Save (keep with
+      caption), Skip (keep without), Cancel (delete the already-written
+      screenshot file from attachments/ and add no blog.md entry). The
+      captured file's removal happens in `popup.applyResult`, so a
+      cancelled capture leaves no trace on disk.

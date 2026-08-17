@@ -34,11 +34,17 @@ space (verified against zenity 4.1.90 / libadwaita).
   path + pixel dimensions read from the PNG header via Go's `image`
   package — do not render a thumbnail). The screenshot is not previewed; a
   text label ("📷 attachments/003.png — 1920×1040") is sufficient. The
-  user types the caption in the text area.
+  user types the caption in the text area. Same three-button contract as
+  code mode: Save keeps it with a caption, Skip keeps it without, Cancel
+  **deletes the screenshot file** from attachments/ and adds nothing.
 - **`code` mode**: `--text` label showing a truncated preview of the
   captured command+output (the full text is what lands in blog.md, the
   preview is just context — truncate, don't grow the window to the size of
-  a full tmux dump). The user types the caption in the text area.
+  a full tmux dump). The user types the caption in the text area. Code
+  mode has **three** buttons: `Save` (keep with caption), `Skip` (keep
+  without caption, this is zenity's cancel button → exit 1), and
+  `Cancel` (an `--extra-button` that discards the capture entirely — the
+  only code path that throws a captured command away).
 - **`note` mode**: the text area IS the note. zenity 4.x < 4.2 has no
   `--add-multiline-entry`, so `--text-info --editable` is the multiline
   input.
@@ -57,14 +63,25 @@ zenity exits `0` on the Save/OK button and `1` on cancel/Esc (any other
 code, e.g. timeout, is treated as cancelled). `popup` returns:
 
 - `Submitted=true` + caption text (possibly empty) on Save,
-- `Submitted=false` on cancel/Esc/close.
+- `Submitted=false` on cancel/Esc/close,
+- `Aborted=true` on the extra "Cancel" button (image and code modes). For
+  an image capture, aborting also deletes the screenshot file that was
+  already written to attachments/ — a cancelled capture leaves no trace.
+
+**Extra-button gotcha (verified against zenity 4.1.90):** the documented
+exit code for an `--extra-button` is `5`, but real zenity 4.1.90 exits
+`1` for it and prints the button's *label* to stdout. `resultFromExit`
+therefore treats the result as aborted when (exit == 5) **or** (exit != 0
+and trimmed stdout == the extra-button label). Do not rely on the exit
+code alone. A caption that happens to equal the label is safe: Save exits
+0, so it is never misdetected as an abort.
 
 The submit/skip behavior differs by mode:
 
-- **image/code**: the entry is **always** appended. Empty submit or
-  cancel just means "no caption line". Losing an already-taken screenshot
-  or capture because the user dismissed the caption window would be a bad
-  outcome.
+- **image/code**: the entry is **always** appended — unless code mode's
+  Cancel was pressed. Empty submit or cancel just means "no caption
+  line". Losing an already-taken screenshot or capture because the user
+  dismissed the caption window would be a bad outcome.
 - **note**: only appended when `Submitted && text != ""`. Cancelled or
   empty note = discarded entirely — nothing was captured yet beyond the
   text itself.

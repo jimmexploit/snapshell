@@ -3,6 +3,7 @@ package popup
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,71 @@ func TestApplyCodeCancelledStillAppends(t *testing.T) {
 	}
 }
 
+func TestApplyImageAbortedDeletesScreenshot(t *testing.T) {
+	dir := t.TempDir()
+	img := filepath.Join(dir, "attachments", "001.png")
+	os.MkdirAll(filepath.Dir(img), 0o700)
+	os.WriteFile(img, []byte("fake png"), 0o600)
+
+	// The extra "Cancel" button must delete the already-captured screenshot
+	// AND leave no blog.md entry behind.
+	if err := applyResult(ModeImage, Result{Submitted: false, Aborted: true}, "attachments/001.png", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(img); !os.IsNotExist(err) {
+		t.Fatalf("cancelled screenshot file must be deleted")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "blog.md")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled image capture must not create blog.md")
+	}
+}
+
+func TestApplyImageAbortedMissingFileIsFine(t *testing.T) {
+	// Deleting a screenshot whose file was never written must not error.
+	dir := t.TempDir()
+	if err := applyResult(ModeImage, Result{Aborted: true}, "attachments/001.png", "", dir); err != nil {
+		t.Fatalf("abort with missing file should be a no-op, got %v", err)
+	}
+}
+
+func TestApplyCodeAbortedDiscards(t *testing.T) {
+	dir := t.TempDir()
+	// The extra "Cancel" button must throw the capture away entirely — no
+	// blog.md at all, unlike Save (keeps with caption) and Skip (keeps
+	// without).
+	if err := applyResult(ModeCode, Result{Submitted: false, Aborted: true}, "", "whoami\nroot\n", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "blog.md")); !os.IsNotExist(err) {
+		t.Fatalf("aborted code capture must not create blog.md")
+	}
+}
+
+func TestResultFromExit(t *testing.T) {
+	cases := []struct {
+		name string
+		code int
+		out  string
+		want Result
+	}{
+		{"save", 0, "port scan", Result{Text: "port scan", Submitted: true}},
+		{"save with empty caption", 0, "", Result{Submitted: true}},
+		// zenity 4.1.90 exits 1 AND prints the label for the extra button.
+		{"cancel extra button real zenity", 1, "Cancel", Result{Text: "Cancel", Aborted: true}},
+		// documented behaviour for other zenity versions.
+		{"cancel extra button documented", 5, "Cancel", Result{Text: "Cancel", Aborted: true}},
+		// A caption that happens to equal the label must NOT abort when saved.
+		{"save caption equals label", 0, "Cancel", Result{Text: "Cancel", Submitted: true}},
+		{"skip", 1, "", Result{Submitted: false}},
+		{"timeout/crash", 255, "", Result{Submitted: false}},
+	}
+	for _, tc := range cases {
+		if got := resultFromExit(tc.code, tc.out); got != tc.want {
+			t.Errorf("%s: resultFromExit(%d, %q) = %+v, want %+v", tc.name, tc.code, tc.out, got, tc.want)
+		}
+	}
+}
+
 func TestApplyUnknownMode(t *testing.T) {
 	if err := applyResult("bogus", Result{}, "", "", t.TempDir()); err == nil {
 		t.Fatal("unknown mode should error")
@@ -114,7 +180,7 @@ func TestZenityArgsImage(t *testing.T) {
 	// The caption input is a text area (--text-info --editable) that fills
 	// the window, so the user can see everything they type.
 	for _, want := range []string{"--text-info", "--editable", "--width", "520", "--height", "300",
-		"--font", "Sans 14", "--ok-label=Save", "--cancel-label=Skip"} {
+		"--font", "Sans 14", "--ok-label=Save", "--cancel-label=Skip", "--extra-button=Cancel"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("image args missing %q: %v", want, args)
 		}
@@ -143,6 +209,9 @@ func TestZenityArgsCodeTruncatesPreview(t *testing.T) {
 	if !found {
 		t.Fatalf("code args missing a --text label: %v", args)
 	}
+	if !slices.Contains(args, "--extra-button=Cancel") {
+		t.Fatalf("code mode must offer the third Cancel button: %v", args)
+	}
 }
 
 func TestZenityArgsNote(t *testing.T) {
@@ -153,6 +222,9 @@ func TestZenityArgsNote(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("note args missing %q: %v", want, args)
 		}
+	}
+	if slices.Contains(args, "--extra-button") {
+		t.Fatalf("note mode must not have the code-mode Cancel button: %v", args)
 	}
 }
 
