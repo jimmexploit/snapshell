@@ -651,15 +651,15 @@ func (d *Daemon) captureCode(s *Session) {
 		}
 		d.logger.Printf("capture tmux: %v — falling back to recorded last command", err)
 		_ = notify.Send("snapshell", "not in tmux — capturing last command only (no output)")
-		d.appendCodeEntry(s, text, "lastcommand")
+		d.appendCodeEntry(s, text, "lastcommand", popup.ModeCode)
 		return
 	}
-	d.appendCodeEntry(s, res.Text, "tmux")
+	d.appendCodeEntry(s, res.Text, "tmux", popup.ModeCode)
 }
 
-// appendCodeEntry is the shared tail of both code-capture paths: show the
-// caption window for the captured text, then append it to blog.md.
-func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
+// appendCodeEntry is the shared tail of the code/selection capture paths:
+// show the caption window for the captured text, then append it to blog.md.
+func (d *Daemon) appendCodeEntry(s *Session, text, source, mode string) {
 	if strings.TrimSpace(text) == "" {
 		d.logger.Printf("capture %s: empty capture, no entry added", source)
 		return
@@ -668,7 +668,7 @@ func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
 	// Same reasoning as the image flow: the captured command text is
 	// valuable on its own, so if the caption window can't spawn the entry
 	// is still appended without a caption.
-	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position); err != nil {
+	if err := popup.Capture(mode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position); err != nil {
 		d.logger.Printf("capture %s: popup: %v", source, err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
@@ -715,7 +715,7 @@ func (d *Daemon) captureSelection(s *Session) {
 		_ = notify.Send("snapshell", err.Error())
 		return
 	}
-	d.appendCodeEntry(s, text, "selection")
+	d.appendCodeEntry(s, text, "selection", popup.ModeSelection)
 }
 
 func (d *Daemon) handleSignals() {

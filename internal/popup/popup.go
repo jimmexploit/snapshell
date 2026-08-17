@@ -20,9 +20,10 @@ import (
 
 // Popup modes.
 const (
-	ModeImage = "image"
-	ModeCode  = "code"
-	ModeNote  = "note"
+	ModeImage     = "image"
+	ModeCode      = "code"
+	ModeNote      = "note"
+	ModeSelection = "selection"
 )
 
 // zenityExtraExit is zenity's documented exit code when an extra button
@@ -176,7 +177,7 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 			// and adds nothing.
 			"--extra-button=Cancel",
 		)
-	case ModeCode:
+	case ModeCode, ModeSelection:
 		return append(args, "--text-info", "--editable",
 			"--title="+dialogTitle(mode),
 			"--text="+escapeMarkup(truncatePreview(text)),
@@ -205,14 +206,18 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 
 // dialogTitle returns the window title for a mode. The position mover
 // finds the dialog by this title, so it must match what zenity shows.
+// Titles use a plain hyphen after "snapshell" (no em dash), and the label
+// describes the thing being captured, not the action.
 func dialogTitle(mode string) string {
 	switch mode {
 	case ModeImage:
-		return "snapshell — add screenshot"
+		return "snapshell - screenshot"
 	case ModeCode:
-		return "snapshell — add command"
+		return "snapshell - command"
 	case ModeNote:
-		return "snapshell — note"
+		return "snapshell - note"
+	case ModeSelection:
+		return "snapshell - selected text"
 	default:
 		return "snapshell"
 	}
@@ -234,7 +239,7 @@ func applyResult(mode string, res Result, file, text, sessionDir string) error {
 			return nil
 		}
 		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindImage, Caption: res.Text, ImagePath: file})
-	case ModeCode:
+	case ModeCode, ModeSelection:
 		if res.Aborted {
 			return nil // the user pressed Cancel: discard the capture
 		}

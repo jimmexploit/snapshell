@@ -54,6 +54,12 @@ space (verified against zenity 4.1.90 / libadwaita).
   (Pango font description) from `[popup].font` is passed when non-empty so
   the text the user types is comfortably readable. Plus a title,
   `--ok-label=Save` and `--cancel-label=Skip` (note mode: `Discard`).
+- **Window titles** (`dialogTitle`) describe the thing captured, not the
+  action, with a plain hyphen after "snapshell": `snapshell - screenshot`,
+  `snapshell - command`, `snapshell - note`, `snapshell - selected text`.
+  No em dash, no "add ". The position mover searches by this exact title,
+  so the strings are the single source of truth for both `--title` and
+  `xdotool search --name`.
 
 Dynamic label text is escaped for Pango markup (`& < >` → entities) since
 zenity parses labels as markup.

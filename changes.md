@@ -207,3 +207,9 @@ independently; a checkmark means done and verified.
       atomic pointer so reloading is safe while capture goroutines read it.
       On a bad TOML the old config stays in place and the failure is
       notified by name. Active session state is untouched by a reload.
+- [x] **22. Popup window titles** — titles now describe the capture
+      ("snapshell - screenshot", "snapshell - command", "snapshell - note",
+      "snapshell - selected text") with a plain hyphen instead of the em
+      dash and no "add " prefix. Alt+4's selection flow now has its own
+      mode (shares code mode's dialog and discard semantics, distinct
+      title).

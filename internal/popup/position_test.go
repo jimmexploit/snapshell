@@ -131,7 +131,7 @@ func readMoves(t *testing.T, recordPath string) []string {
 func TestMoveDialogCentersWindow(t *testing.T) {
 	record := filepath.Join(t.TempDir(), "moves")
 	fakeXdotool(t, t.TempDir(), record, false)
-	if err := moveDialog("snapshell — add command", "center", 560, 320); err != nil {
+	if err := moveDialog("snapshell - command", "center", 560, 320); err != nil {
 		t.Fatalf("moveDialog: %v", err)
 	}
 	// 1920x1080 screen, 560x320 dialog → center (680, 380).
@@ -144,7 +144,7 @@ func TestMoveDialogCentersWindow(t *testing.T) {
 func TestMoveDialogPixels(t *testing.T) {
 	record := filepath.Join(t.TempDir(), "moves")
 	fakeXdotool(t, t.TempDir(), record, false)
-	if err := moveDialog("snapshell — note", "120,80", 560, 320); err != nil {
+	if err := moveDialog("snapshell - note", "120,80", 560, 320); err != nil {
 		t.Fatalf("moveDialog: %v", err)
 	}
 	moves := readMoves(t, record)
@@ -156,7 +156,7 @@ func TestMoveDialogPixels(t *testing.T) {
 func TestMoveDialogRetriesWhenZenityReplaces(t *testing.T) {
 	record := filepath.Join(t.TempDir(), "moves")
 	fakeXdotool(t, t.TempDir(), record, true)
-	if err := moveDialog("snapshell — add screenshot", "center", 560, 320); err != nil {
+	if err := moveDialog("snapshell - screenshot", "center", 560, 320); err != nil {
 		t.Fatalf("moveDialog: %v", err)
 	}
 	moves := readMoves(t, record)
