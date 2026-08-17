@@ -88,18 +88,18 @@ func render(e Entry) (string, error) {
 	}
 }
 
-// captionLine renders the bold caption line, or nothing when empty — never
-// a blank bold line.
+// captionLine renders the caption as a plain paragraph line, or nothing
+// when empty — never a blank line. Captions are intentionally not bolded.
 func captionLine(caption string) string {
 	if strings.TrimSpace(caption) == "" {
 		return ""
 	}
-	return "**" + caption + "**\n"
+	return caption + "\n"
 }
 
-// codeFence wraps code in a ```console fence. If the code itself contains
-// a run of backticks, the fence is widened past the longest run so the
-// block never breaks early.
+// codeFence wraps code in a language-tagged fence chosen by DetectLang. If
+// the code itself contains a run of backticks, the fence is widened past
+// the longest run so the block never breaks early.
 func codeFence(text string) string {
 	fenceLen := 3
 	for _, line := range strings.Split(text, "\n") {
@@ -113,5 +113,5 @@ func codeFence(text string) string {
 	if !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
-	return fence + "console\n" + body + fence
+	return fence + DetectLang(text) + "\n" + body + fence
 }

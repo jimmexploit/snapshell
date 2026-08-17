@@ -63,6 +63,7 @@ type KeymapConfig struct {
 	Screenshot string `toml:"screenshot"`
 	Command    string `toml:"command"`
 	Note       string `toml:"note"`
+	Selection  string `toml:"selection"`
 }
 
 // Default returns the built-in configuration values. SessionRoot is the
@@ -73,7 +74,7 @@ func Default() *Config {
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
 		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
 		Popup:      PopupConfig{Width: 560, Height: 320, Font: "Sans 13"},
-		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3"},
+		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 	}
 }
@@ -234,6 +235,9 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Keymaps.Note) == "" {
 		c.Keymaps.Note = def.Keymaps.Note
+	}
+	if strings.TrimSpace(c.Keymaps.Selection) == "" {
+		c.Keymaps.Selection = def.Keymaps.Selection
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot

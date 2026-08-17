@@ -16,6 +16,7 @@ import (
 
 	"snapshell/internal/blog"
 	"snapshell/internal/capture/screenshot"
+	"snapshell/internal/capture/selection"
 	"snapshell/internal/capture/tmuxcap"
 	"snapshell/internal/config"
 	"snapshell/internal/hotkeys"
@@ -183,7 +184,7 @@ func (d *Daemon) start(disableHotkeys bool) error {
 	return nil
 }
 
-// registerHotkeys grabs the configured global hotkeys (default Alt+1/2/3).
+// registerHotkeys grabs the configured global hotkeys (default Alt+1/2/3/4).
 // Grab failures are reported but do not abort the daemon — the daemon stays
 // usable for session/IPC purposes.
 func (d *Daemon) registerHotkeys() error {
@@ -192,11 +193,13 @@ func (d *Daemon) registerHotkeys() error {
 			"screenshot": d.cfg.Keymaps.Screenshot,
 			"code":       d.cfg.Keymaps.Command,
 			"note":       d.cfg.Keymaps.Note,
+			"selection":  d.cfg.Keymaps.Selection,
 		},
 		map[string]hotkeys.Handler{
 			"screenshot": func() { d.onHotkey("screenshot") },
 			"code":       func() { d.onHotkey("code") },
 			"note":       func() { d.onHotkey("note") },
+			"selection":  func() { d.onHotkey("selection") },
 		},
 	)
 	if err != nil {
@@ -507,6 +510,8 @@ func (d *Daemon) dispatchCapture(kind string, s *Session) {
 		d.captureCode(s)
 	case "note":
 		d.captureNote(s)
+	case "selection":
+		d.captureSelection(s)
 	default:
 		d.logger.Printf("capture: unhandled hotkey kind %q", kind)
 	}
@@ -634,6 +639,25 @@ func (d *Daemon) captureNote(s *Session) {
 		_ = notify.Send("snapshell", err.Error())
 		return
 	}
+}
+
+// captureSelection runs the Alt+4 flow: the currently selected text
+// (falling back to the clipboard when nothing is selected) → caption popup
+// → entry appended to blog.md. An empty selection+clipboard is not an
+// error, just a notification.
+func (d *Daemon) captureSelection(s *Session) {
+	text, err := selection.Read()
+	if err != nil {
+		if errors.Is(err, selection.ErrEmpty) {
+			d.logger.Printf("capture selection: nothing selected and clipboard empty")
+			_ = notify.Send("snapshell", err.Error())
+			return
+		}
+		d.logger.Printf("capture selection: %v", err)
+		_ = notify.Send("snapshell", err.Error())
+		return
+	}
+	d.appendCodeEntry(s, text, "selection")
 }
 
 func (d *Daemon) handleSignals() {

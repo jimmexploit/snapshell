@@ -17,7 +17,8 @@ snapshell/
 ├── internal/daemon/AGENTS.md          ← daemon lifecycle, socket server, session state
 ├── internal/hotkeys/AGENTS.md         ← X11 global key grabbing
 ├── internal/capture/screenshot/AGENTS.md  ← screenshot tool invocation
-├── internal/capture/tmuxcap/AGENTS.md ← tmux pane capture by row range
+├── internal/capture/tmuxcap/AGENTS.md     ← tmux pane capture by row range
+├── internal/capture/selection/AGENTS.md   ← selected/clipboard text via xclip
 ├── internal/shellhook/AGENTS.md       ← bash/zsh hook scripts + marker files
 ├── internal/popup/AGENTS.md           ← zenity caption/note window (no TUI)
 ├── internal/blog/AGENTS.md            ← blog.md writer, formatting contract
@@ -49,7 +50,7 @@ a manual smoke test.
    unimplemented (print "not implemented" and exit).
 2. Daemon skeleton: Unix socket server, PID file, `daemon start|stop|status`
    round-trips over the socket. See `internal/daemon/AGENTS.md`.
-3. X11 global hotkey grabbing for Alt+1/2/3 — log to stdout when each
+3. X11 global hotkey grabbing for Alt+1/2/3/4 — log to stdout when each
    fires. Get this solid standalone before wiring in capture logic. See
    `internal/hotkeys/AGENTS.md`.
 4. Alt+1 screenshot pipeline end-to-end, **skip captions for now**: hotkey
@@ -63,9 +64,11 @@ a manual smoke test.
    `internal/capture/tmuxcap/AGENTS.md`.
 7. Alt+3 raw note (simplest one — no preview, just text → paragraph in
    `blog.md`).
-8. Popup UI (`internal/popup/AGENTS.md`) — build it once, wire it into all
-   three flows for captions.
-9. Config loading + graceful fallbacks (`internal/config/AGENTS.md`).
+8. Alt+4 selection/clipboard capture: `xclip` PRIMARY selection, falling
+   back to the clipboard → caption → code entry in `blog.md`.
+9. Popup UI (`internal/popup/AGENTS.md`) — build it once, wire it into all
+   four flows for captions.
+10. Config loading + graceful fallbacks (`internal/config/AGENTS.md`).
 
 ## Cross-cutting conventions
 
@@ -97,7 +100,7 @@ a manual smoke test.
 - [ ] `snapshell daemon start` runs standalone; a systemd user unit is
       provided (`systemd/`) so it can also be enabled to survive
       logout/login.
-- [ ] Alt+1/2/3 work regardless of which window currently has focus.
+- [ ] Alt+1/2/3/4 work regardless of which window currently has focus.
 - [ ] Alt+2 captures exactly one command and its full output (including
       long/scrolled output) when in tmux, and cleanly no-ops with a
       notification when not in tmux.

@@ -159,3 +159,19 @@ independently; a checkmark means done and verified.
       output. Degrades cleanly: missing `kitty`, a dead socket/window, or a
       window whose shell predates the hook all fall back to the command text
       (with an actionable error when kitty itself is the problem).
+- [x] **16. Plain captions + language-tagged code blocks** — blog.md
+      captions are no longer bolded by default; they render as a plain
+      paragraph line directly above the image/code block. Code blocks get
+      a language tag chosen from the captured text by
+      `internal/blog/lang.go`: shell sessions (a prompt line) → ```bash,
+      source code by content/shebang → ```go / ```python / ```yaml /
+      ```json / ```html / ```toml / ```javascript, anything else →
+      ```text. A plain `# ` line is treated as a root prompt only after
+      content detection fails, so `# comment` lines in selected code don't
+      misclassify.
+- [x] **17. Alt+4 selection/clipboard capture** — a fourth global hotkey
+      (configurable under `[keymaps].selection`, default Alt+4) captures
+      the currently selected text via `xclip -o -selection primary`,
+      falling back to the clipboard when nothing is selected. Both empty →
+      a notification, no entry. The captured text goes through the same
+      caption popup + language-tagged blog.md append as Alt+2.

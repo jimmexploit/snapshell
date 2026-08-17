@@ -23,6 +23,7 @@ include_output = true     # false = Alt+2 captures only the command line
 screenshot = "Alt+1"      # global hotkeys; Alt=Mod1, Ctrl=Control,
 command    = "Alt+2"      # Super/Win=Mod4, raw Mod1..Mod5 accepted too
 note       = "Alt+3"
+selection  = "Alt+4"      # capture selected text (clipboard fallback)
 
 [paths]
 session_root = "~/.local/share/snapshell"

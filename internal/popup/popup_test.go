@@ -45,8 +45,11 @@ func TestApplyImageWithCaption(t *testing.T) {
 		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
-	if !strings.Contains(string(data), "**rooted it**") {
+	if !strings.Contains(string(data), "rooted it\n") {
 		t.Fatalf("want caption line, got %q", data)
+	}
+	if strings.Contains(string(data), "**") {
+		t.Fatalf("caption must not be bolded, got %q", data)
 	}
 	if !strings.Contains(string(data), "![](attachments/001.png)") {
 		t.Fatalf("want relative image path, got %q", data)
@@ -81,7 +84,7 @@ func TestApplyCode(t *testing.T) {
 		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
-	for _, want := range []string{"**port scan**", "```console", "nmap -sV 10.10.11.5", "```"} {
+	for _, want := range []string{"port scan\n", "```bash", "nmap -sV 10.10.11.5", "```"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("code entry missing %q:\n%s", want, data)
 		}
@@ -94,7 +97,7 @@ func TestApplyCodeCancelledStillAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
-	if !strings.Contains(string(data), "```console") || strings.Contains(string(data), "**") {
+	if !strings.Contains(string(data), "```text") || strings.Contains(string(data), "**") {
 		t.Fatalf("cancelled code capture should append without a caption:\n%s", data)
 	}
 }

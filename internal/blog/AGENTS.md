@@ -32,30 +32,55 @@ will be scanning these by eye occasionally, local time is more useful.
 ### Image entry (from Alt+1)
 ```
 <!-- 2026-08-15T14:02:11+02:00 -->
-**<caption text, if any>**
+<caption text, if any>
 ![](attachments/003.png)
 ```
-If no caption was given, omit the `**...**` line entirely — don't leave a
-blank bold line.
+If no caption was given, omit the caption line entirely — don't leave a
+blank line. Captions are **plain text, not bolded** — the `**...**` wrapper
+was dropped as a deliberate formatting choice.
 
 ### Code entry (from Alt+2)
 ````
 <!-- 2026-08-15T14:03:40+02:00 -->
-**<caption text, if any>**
-```console
-<captured pane text verbatim>
+<caption text, if any>
+```bash
+<captured text verbatim>
 ```
 ````
-Same rule: omit the caption line if empty. Use the `console` language tag
-consistently (not `bash`, not unlabeled) — it's a reasonable generic
-choice since the captured text includes both the prompt and output, not
-just a command.
+Same rule: omit the caption line if empty. The language tag after the
+opening fence is **chosen by `DetectLang`** (see below), not hardcoded.
 
 ### Note entry (from Alt+3)
 ```
 <!-- 2026-08-15T14:05:02+02:00 -->
 <note text as a plain paragraph, no special formatting applied>
 ```
+
+## Code block language detection
+
+`DetectLang(text string) string` in `lang.go` picks the language tag for
+a code fence by inspecting the captured text. It must distinguish a
+terminal session (Alt+2 / Alt+4-of-a-shell) from raw source code
+(Alt+4-of-a-file). Rules, in order:
+
+1. **Strong shell prompt** anywhere (powerline box chars `┌`/`└`, or a
+   line starting with `$ `, `❯ `, `➜ `, `> `, or a zsh `% `) → `bash`.
+2. **Shebang** on the first line (`#!/usr/bin/env python3` → `python`,
+   `#!/bin/bash` → `bash`, `node` → `javascript`, perl/ruby/go also
+   mapped, unknown → the interpreter basename).
+3. **Content detection** (only when no prompt is present, so a shell
+   session that merely displayed a file still reads as a session):
+   Go (`package X` + `func`/`type`/`var`/`const`) → `go`; Python
+   (`def`/`class`/`import`/`from` at line start, or `if __name__ ==`) →
+   `python`; YAML (`---` or an early `key: value` line without `=`/`{`/`[`)
+   → `yaml`; JSON (`{`…`}` or `[`…`]`) → `json`; HTML (`<!DOCTYPE`/`<html`)
+   → `html`; TOML (`[section]` + `key = value`) → `toml`.
+4. **Root prompt** — a `# ` line → `bash`. Checked *last* on purpose,
+   because `# comment` lines in source code look identical; content
+   detection runs first so real code wins.
+5. Everything else → `text`.
+
+Keep detection pure and unit-testable (no I/O, no side effects).
 
 ## Formatting rules
 

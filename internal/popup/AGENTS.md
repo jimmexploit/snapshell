@@ -4,7 +4,8 @@ Owns: the floating window that appears after a screenshot or command
 capture (and for raw notes) to collect an optional caption. It is a real
 **GUI window** (a zenity GTK form dialog) — there is no TUI anywhere in
 this mode. This is the shared tail-end referenced by the Alt+1 screenshot
-flow, the Alt+2 code flow, and the Alt+3 raw-note flow.
+flow, the Alt+2 code flow, the Alt+3 raw-note flow, and the Alt+4
+selection flow.
 
 ## Design: one zenity dialog per mode, spawned by the daemon
 

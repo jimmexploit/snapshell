@@ -16,7 +16,7 @@ it (the CLI).
      assuming stale — don't blindly delete a socket someone else might be
      using).
    - Load config (`internal/config`).
-   - Register X11 global hotkey grabs (`internal/hotkeys`) for Alt+1/2/3.
+   - Register X11 global hotkey grabs (`internal/hotkeys`) for Alt+1/2/3/4.
    - Log "daemon started, pid=N" to the daemon log.
 2. Hold active session state in memory: session name, session folder path,
    incrementing attachment counter (for `NNN.png` naming — zero-padded to
@@ -44,10 +44,11 @@ it (the CLI).
    - `status`: report active session name + count of entries appended to
      `blog.md` so far (or "no active session").
 4. On each hotkey firing (delivered from `internal/hotkeys`), dispatch to
-   the appropriate capture flow (`internal/capture/screenshot` or
-   `internal/capture/tmuxcap`, or the raw-note path) using the current
-   active session's folder path. If no session is active, notify and
-   return immediately — do not queue the capture for later.
+   the appropriate capture flow (`internal/capture/screenshot`,
+   `internal/capture/tmuxcap`, `internal/capture/selection`, or the
+   raw-note path) using the current active session's folder path. If no
+   session is active, notify and return immediately — do not queue the
+   capture for later.
 5. On `daemon stop` (via IPC) or SIGTERM/SIGINT: release X11 hotkey grabs,
    close the socket listener, remove the PID file, remove the socket file,
    flush the log, exit 0.

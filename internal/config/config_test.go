@@ -22,8 +22,8 @@ func TestLoadCreatesDefaultFile(t *testing.T) {
 	if cfg.Popup.Width != 560 || cfg.Popup.Height != 320 || cfg.Popup.Font != "Sans 13" {
 		t.Fatalf("popup = %+v, want width 560 height 320 font Sans 13", cfg.Popup)
 	}
-	if cfg.Keymaps.Screenshot != "Alt+1" || cfg.Keymaps.Command != "Alt+2" || cfg.Keymaps.Note != "Alt+3" {
-		t.Fatalf("keymaps = %+v, want Alt+1/Alt+2/Alt+3", cfg.Keymaps)
+	if cfg.Keymaps.Screenshot != "Alt+1" || cfg.Keymaps.Command != "Alt+2" || cfg.Keymaps.Note != "Alt+3" || cfg.Keymaps.Selection != "Alt+4" {
+		t.Fatalf("keymaps = %+v, want Alt+1/Alt+2/Alt+3/Alt+4", cfg.Keymaps)
 	}
 	home, _ := os.UserHomeDir()
 	if cfg.Paths.SessionRoot != filepath.Join(home, ".local", "share", "snapshell") {

@@ -158,9 +158,9 @@ type commandRecord struct {
 	pane             string // tmux pane id (%N) for tmux records
 	source           string // tty device for plain/kitty records
 	prev, start, end int
-	text             string      // plain/kitty-record command text
-	kittyWindow      string      // kitty window id for ktty records
-	kittyListen      string      // kitty listen socket for ktty records
+	text             string // plain/kitty-record command text
+	kittyWindow      string // kitty window id for ktty records
+	kittyListen      string // kitty listen socket for ktty records
 }
 
 // lastCommandRecord returns the most recently completed command from the
