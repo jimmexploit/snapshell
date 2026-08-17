@@ -39,6 +39,12 @@ reload     = "Alt+5"      # re-read config + re-grab hotkeys, no restart
 
 [paths]
 session_root = "~/.local/share/snapshell"
+
+[themes]
+name = ""                 # GTK theme for the popup via GTK_THEME
+                          # ("Sweet", "Sweet:dark", ...); empty = system default
+root = ""                 # extra dir to scan for installed themes
+                          # (list-themes); empty = standard locations only
 ```
 
 ## Behavior
@@ -80,6 +86,13 @@ session_root = "~/.local/share/snapshell"
   swaps it atomically (see `internal/daemon/AGENTS.md`). `ReloadOnHotkeyOn()`
   and `OutputIncluded()` are the *bool accessors used to drive that
   decision.
+- **Theme search dirs live here** (`ThemeSearchDirs() []string`): the
+  standard GTK theme locations (/usr/share/themes, /usr/local/share/themes,
+  ~/.themes, ~/.local/share/themes) plus `[themes].root` (a single extra
+  root, `~`-expanded), deduplicated. `snapshell list-themes` consumes this;
+  the popup itself only receives the theme *name* and sets GTK_THEME. The
+  actual directory scan (which entries are GTK themes) is `cmd/snapshell`
+  territory, not this package's.
 
 ## What NOT to do here
 

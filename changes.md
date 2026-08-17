@@ -218,3 +218,13 @@ independently; a checkmark means done and verified.
       generic Sans/Serif/Monospace Pango families always included) so the
       user can pick a value for `[popup].font`. Works without the daemon.
       Missing fc-list errors with a named install hint.
+- [x] **24. GTK theme support for the popup + `snapshell list-themes`** —
+      new `[themes]` config section: `name` is the GTK theme applied to
+      the popup via GTK_THEME ("Sweet", "Sweet:dark", ...; empty = system
+      default) and `root` is an extra directory to scan for themes
+      installed outside the standard locations. New `list-themes`
+      subcommand scans /usr/share/themes, /usr/local/share/themes,
+      ~/.themes, ~/.local/share/themes and the custom root, listing only
+      real GTK themes (those with a gtk-* subdir; metacity/xfwm
+      decoration themes are excluded). Verified live: zenity spawns with
+      GTK_THEME=Sweet:dark, and a custom root appears in the listing.

@@ -36,6 +36,16 @@ snapshell list-fonts         list every font family on the system so the
                             generic Pango families (Sans/Serif/Monospace)
                             are always included.
 
+snapshell list-themes        list every GTK theme installed on the system
+                            (for [themes].name). Scans /usr/share/themes,
+                            /usr/local/share/themes, ~/.themes,
+                            ~/.local/share/themes plus any [themes].root,
+                            keeping only real GTK themes (dirs with a
+                            gtk-* subdirectory — metacity/xfwm decoration
+                            themes are excluded since GTK_THEME can't apply
+                            them to the popup). Reads the config via
+                            internal/config for the custom root.
+
 Hidden plumbing (not shown in help, called by the installed shell hook):
 snapshell _hook-mark         record a tmux row marker
 snapshell _hook-record       record the last command's text
@@ -43,10 +53,11 @@ snapshell _hook-record       record the last command's text
 
 There is no `shellhook` command (the setup wizard owns hook install) and no
 `completion` command (`root.CompletionOptions.DisableDefaultCmd = true`).
-`list-fonts` is the one command that does not talk to the daemon: it is a
-read-only system query (`fc-list`), so it works even when the daemon is
-stopped — and it must fail with a named "fc-list not found on PATH" error
-when fontconfig is absent, never a raw exec error.
+`list-fonts` and `list-themes` are the one commands that do not talk to the
+daemon: they are read-only system queries (`fc-list`, theme-directory
+scans), so they work even when the daemon is stopped — and they must fail
+with a named "fc-list not found on PATH" error when fontconfig is absent,
+never a raw exec error.
 
 Use a real CLI library (`github.com/spf13/cobra` is fine) so `--help`
 output is generated for free. Every subcommand needs a one-line

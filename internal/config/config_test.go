@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -278,10 +279,58 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\""} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\""} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}
+	}
+}
+
+func TestThemeConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[themes]\nname = \"Sweet:dark\"\nroot = \"~/my-themes\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.Themes.Name != "Sweet:dark" {
+		t.Fatalf("theme name = %q, want Sweet:dark", cfg.Themes.Name)
+	}
+
+	home, _ := os.UserHomeDir()
+	dirs := cfg.ThemeSearchDirs()
+	want := []string{
+		"/usr/share/themes",
+		"/usr/local/share/themes",
+		filepath.Join(home, ".themes"),
+		filepath.Join(home, ".local", "share", "themes"),
+		filepath.Join(home, "my-themes"),
+	}
+	if !reflect.DeepEqual(dirs, want) {
+		t.Fatalf("search dirs = %q, want %q", dirs, want)
+	}
+}
+
+func TestThemeSearchDirsDefaults(t *testing.T) {
+	cfg := Default()
+	home, _ := os.UserHomeDir()
+	dirs := cfg.ThemeSearchDirs()
+	want := []string{
+		"/usr/share/themes",
+		"/usr/local/share/themes",
+		filepath.Join(home, ".themes"),
+		filepath.Join(home, ".local", "share", "themes"),
+	}
+	if !reflect.DeepEqual(dirs, want) {
+		t.Fatalf("search dirs = %q, want %q", dirs, want)
+	}
+	// A root that duplicates a standard dir is not repeated.
+	cfg.Themes.Root = "/usr/share/themes"
+	dirs = cfg.ThemeSearchDirs()
+	if len(dirs) != len(want) {
+		t.Fatalf("duplicate root should be dropped, got %q", dirs)
 	}
 }
 

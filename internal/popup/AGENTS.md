@@ -10,17 +10,25 @@ position after it spawns (`[popup].position`).
 
 ## Design: one zenity dialog per mode, spawned by the daemon
 
-`popup.Capture(mode, sessionDir, file, text string, width, height int)` is
-the single entry point. It blocks until the dialog closes: it launches
-zenity, reads the caption/note text from its stdout, then appends the
-finished entry to `<sessionDir>/blog.md` via `internal/blog`. It must be
-run in its own goroutine by the daemon — a slow or ignored dialog must
-never block the daemon or the next hotkey press.
+`popup.Capture(mode, sessionDir, file, text string, width, height int,
+font, position, theme string)` is the single entry point. It blocks until
+the dialog closes: it launches zenity, reads the caption/note text from
+its stdout, then appends the finished entry to `<sessionDir>/blog.md` via
+`internal/blog`. It must be run in its own goroutine by the daemon — a
+slow or ignored dialog must never block the daemon or the next hotkey
+press.
 
 Because the dialog is spawned **inside the daemon process** (a synchronous
 `exec.Command`), there is no separate popup subprocess and no temp file:
 the captured code text is passed in memory. `zenity` is the only dependency
 (`exec.LookPath("zenity")`, with an error that names the missing binary).
+
+**Theme:** a non-empty `theme` is passed to zenity as the `GTK_THEME`
+environment variable (`GTK_THEME=Sweet:dark zenity ...`), re-theming the
+dialog at spawn time. The value comes from `[themes].name` in the config;
+an unknown theme silently falls back to the system default (GTK's own
+behavior — no validation here). Which themes exist is `snapshell
+list-themes`'s job, not this package's.
 
 ## Dialog by mode
 

@@ -23,6 +23,7 @@ type Config struct {
 	Popup      PopupConfig      `toml:"popup"`
 	Keymaps    KeymapConfig     `toml:"keymaps"`
 	Paths      PathsConfig      `toml:"paths"`
+	Themes     ThemesConfig     `toml:"themes"`
 }
 
 // ScreenshotConfig configures the Alt+1 capture tool.
@@ -82,6 +83,19 @@ type PathsConfig struct {
 	SessionRoot string `toml:"session_root"`
 }
 
+// ThemesConfig configures the GTK theme applied to the popup window.
+type ThemesConfig struct {
+	// Name is the GTK theme passed to the popup via the GTK_THEME
+	// environment variable (e.g. "Sweet" or "Sweet:dark"). Empty = the
+	// system's default theme. See `snapshell list-themes` for what's
+	// installed.
+	Name string `toml:"name"`
+	// Root is an extra directory to scan for installed themes, for people
+	// who install them outside the standard locations (/usr/share/themes,
+	// ~/.themes, ~/.local/share/themes). Empty = standard locations only.
+	Root string `toml:"root"`
+}
+
 // KeymapConfig configures the global hotkeys. Values are user-friendly
 // combos like "Alt+1" or "Ctrl+Shift+F5"; Alt = Mod1, Ctrl = Control,
 // Super/Win = Mod4 (the raw Mod1..Mod5 names are accepted too).
@@ -107,6 +121,7 @@ func Default() *Config {
 		Popup:      PopupConfig{Width: DefaultPopupWidth, Height: DefaultPopupHeight, Font: "Sans 13", KeepRatio: &keepRatio},
 		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
+		Themes:     ThemesConfig{},
 	}
 }
 
@@ -126,6 +141,32 @@ func (c *Config) OutputIncluded() bool {
 // capture flow (default false).
 func (c *Config) ReloadOnHotkeyOn() bool {
 	return c.Capture.ReloadOnHotkey != nil && *c.Capture.ReloadOnHotkey
+}
+
+// ThemeSearchDirs returns the directories to scan for installed GTK themes:
+// the standard system and per-user locations plus the configured
+// `[themes].root`. A leading "~/" in root is expanded. Duplicates are
+// dropped. Used by `snapshell list-themes`.
+func (c *Config) ThemeSearchDirs() []string {
+	var dirs []string
+	add := func(d string) {
+		for _, have := range dirs {
+			if have == d {
+				return
+			}
+		}
+		dirs = append(dirs, d)
+	}
+	add("/usr/share/themes")
+	add("/usr/local/share/themes")
+	if home, err := os.UserHomeDir(); err == nil {
+		add(filepath.Join(home, ".themes"))
+		add(filepath.Join(home, ".local", "share", "themes"))
+	}
+	if strings.TrimSpace(c.Themes.Root) != "" {
+		add(expandPath(strings.TrimSpace(c.Themes.Root)))
+	}
+	return dirs
 }
 
 // ConfigPath returns the default config file location.
@@ -270,6 +311,16 @@ const defaultFileText = `# snapshell configuration
   # "~/.local/share/snapshell" is the default (always writable); you can
   # use any path you have write access to (e.g. "~/snapshell").
   session_root = "~/.local/share/snapshell"
+
+[themes]
+  # GTK theme applied to the popup window, e.g. "Sweet" or "Sweet:dark"
+  # (GTK_THEME env var). Empty = the system's default theme. See
+  # 'snapshell list-themes' for what's installed on this machine.
+  name = ""
+  # Extra directory to scan for installed themes, for themes installed
+  # outside the standard locations (/usr/share/themes, ~/.themes,
+  # ~/.local/share/themes). Empty = standard locations only.
+  root = ""
 `
 
 // fillDefaults replaces empty/zero values with the built-in defaults.

@@ -37,6 +37,7 @@ func newRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newSetupCmd(),
 		newListFontsCmd(),
+		newListThemesCmd(),
 		// Hidden plumbing called by the installed shell hook snippets.
 		newHookMarkCmd(),
 		newHookRecordCmd(),

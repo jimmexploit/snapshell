@@ -62,7 +62,9 @@ type Result struct {
 // choice); font is a Pango font description for the text area ("" = the
 // default font). position moves the dialog to a spot on screen after it
 // spawns (a preset like "center"/"top-right" or explicit pixels
-// "120,80"); empty leaves placement to the window manager.
+// "120,80"); empty leaves placement to the window manager. theme is a GTK
+// theme applied to the dialog via the GTK_THEME environment variable
+// ("Sweet", "Sweet:dark", ...); empty uses the system's default theme.
 //
 // Empty or cancelled submit = "skip caption" for image/code (the entry is
 // still appended — losing an already-taken screenshot because the caption
@@ -76,8 +78,8 @@ type Result struct {
 // missing, dialog failed to launch, a configured position that can't be
 // applied) — in that case nothing is appended and the caller decides how
 // to fall back. A user pressing cancel is not an error.
-func Capture(mode, sessionDir, file, text string, width, height int, font, position string) error {
-	res, err := askDialog(mode, sessionDir, file, text, width, height, font, position)
+func Capture(mode, sessionDir, file, text string, width, height int, font, position, theme string) error {
+	res, err := askDialog(mode, sessionDir, file, text, width, height, font, position, theme)
 	if err != nil {
 		return err
 	}
@@ -85,7 +87,7 @@ func Capture(mode, sessionDir, file, text string, width, height int, font, posit
 }
 
 // askDialog launches the zenity window and returns what the user did.
-func askDialog(mode, sessionDir, file, text string, width, height int, font, position string) (Result, error) {
+func askDialog(mode, sessionDir, file, text string, width, height int, font, position, theme string) (Result, error) {
 	bin, err := resolveZenity()
 	if err != nil {
 		return Result{}, err
@@ -104,6 +106,11 @@ func askDialog(mode, sessionDir, file, text string, width, height int, font, pos
 	}
 
 	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height, font)...)
+	if theme != "" {
+		// GTK_THEME re-themes the dialog at spawn time; a missing theme
+		// falls back to the system default silently (GTK's own behavior).
+		cmd.Env = append(os.Environ(), "GTK_THEME="+theme)
+	}
 	if position != "" {
 		// The dialog spawns unmoved; a background helper slides it into
 		// place as soon as it maps. Best-effort beyond the upfront
