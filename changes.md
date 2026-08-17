@@ -189,3 +189,13 @@ independently; a checkmark means done and verified.
       screenshot file from attachments/ and add no blog.md entry). The
       captured file's removal happens in `popup.applyResult`, so a
       cancelled capture leaves no trace on disk.
+- [x] **20. Popup size ratio lock + spawn position** — two new `[popup]`
+      config keys. `keep_ratio = true` (default ON) preserves the default
+      560:320 aspect ratio: change one of width/height away from its
+      default and the other auto-adjusts; set both and both are honored.
+      `position` spawns the dialog at a chosen spot via xdotool — named
+      presets ("center", "top-right", "bottom-left", ...) or explicit
+      pixels ("120,80"); empty lets the window manager place it. zenity
+      has no --geometry, so the window is moved after it maps by polling
+      `xdotool search` + `windowmove`. Config values in effect before this
+      change are preserved in `config-reference.md`.

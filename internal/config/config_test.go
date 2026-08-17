@@ -51,8 +51,10 @@ func TestLoadPartialFillsDefaults(t *testing.T) {
 	if cfg.Popup.Width != 600 {
 		t.Fatalf("width = %d, want configured 600", cfg.Popup.Width)
 	}
-	if cfg.Popup.Height != 320 {
-		t.Fatalf("height = %d, want default 320", cfg.Popup.Height)
+	// keep_ratio defaults ON: changing only width away from 560 recomputes
+	// height to preserve the 560:320 ratio (600 * 320/560 = 342.86 → 343).
+	if cfg.Popup.Height != 343 {
+		t.Fatalf("height = %d, want 343 (keep_ratio applied)", cfg.Popup.Height)
 	}
 	if cfg.Screenshot.Tool != "flameshot" {
 		t.Fatalf("tool = %q, want default flameshot", cfg.Screenshot.Tool)
@@ -196,5 +198,86 @@ func TestResetDefaultBacksUpExisting(t *testing.T) {
 	}
 	if cfg.Keymaps.Screenshot != "Alt+1" || cfg.Screenshot.Tool != "flameshot" {
 		t.Fatalf("reset config drifted: %+v", cfg)
+	}
+}
+
+func loadPopup(t *testing.T, body string) *Config {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[popup]\n"+body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	return cfg
+}
+
+func TestKeepRatioDefaultOn(t *testing.T) {
+	cfg := loadPopup(t, "width = 560\nheight = 320\n")
+	if !cfg.KeepRatioOn() {
+		t.Fatal("keep_ratio should default to true")
+	}
+	// Both dimensions at defaults → untouched.
+	if cfg.Popup.Width != 560 || cfg.Popup.Height != 320 {
+		t.Fatalf("popup = %dx%d, want 560x320", cfg.Popup.Width, cfg.Popup.Height)
+	}
+}
+
+func TestKeepRatioWidthChangeRecomputesHeight(t *testing.T) {
+	cfg := loadPopup(t, "width = 700\nheight = 320\n")
+	if cfg.Popup.Height != 400 { // 700 * 320/560
+		t.Fatalf("height = %d, want 400", cfg.Popup.Height)
+	}
+}
+
+func TestKeepRatioHeightChangeRecomputesWidth(t *testing.T) {
+	cfg := loadPopup(t, "width = 560\nheight = 640\n")
+	if cfg.Popup.Width != 1120 { // 640 * 560/320
+		t.Fatalf("width = %d, want 1120", cfg.Popup.Width)
+	}
+}
+
+func TestKeepRatioBothDimensionsHonored(t *testing.T) {
+	cfg := loadPopup(t, "width = 900\nheight = 500\n")
+	if cfg.Popup.Width != 900 || cfg.Popup.Height != 500 {
+		t.Fatalf("both non-default sizes must be honored: %dx%d", cfg.Popup.Width, cfg.Popup.Height)
+	}
+}
+
+func TestKeepRatioOffLetsBothSizesStand(t *testing.T) {
+	cfg := loadPopup(t, "width = 600\nheight = 999\nkeep_ratio = false\n")
+	if cfg.KeepRatioOn() {
+		t.Fatal("keep_ratio should be off")
+	}
+	if cfg.Popup.Width != 600 || cfg.Popup.Height != 999 {
+		t.Fatalf("popup = %dx%d, want 600x999 untouched", cfg.Popup.Width, cfg.Popup.Height)
+	}
+}
+
+func TestPositionConfig(t *testing.T) {
+	cfg := loadPopup(t, "width = 560\nheight = 320\nposition = \"bottom-right\"\n")
+	if cfg.Popup.Position != "bottom-right" {
+		t.Fatalf("position = %q", cfg.Popup.Position)
+	}
+	if cfg := loadPopup(t, "width = 560\nheight = 320\n"); cfg.Popup.Position != "" {
+		t.Fatalf("position should default to empty, got %q", cfg.Popup.Position)
+	}
+}
+
+func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if _, err := LoadFrom(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("default file missing %q:\n%s", want, data)
+		}
 	}
 }

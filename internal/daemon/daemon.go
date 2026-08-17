@@ -558,7 +558,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	// ignored dialog never blocks the daemon or the next hotkey press.
 	// The dialog failing must not lose the screenshot that was just taken:
 	// it is still appended, just without a caption.
-	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font); err != nil {
+	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font, d.cfg.Popup.Position); err != nil {
 		d.logger.Printf("capture screenshot: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath}); err != nil {
@@ -610,7 +610,7 @@ func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
 	// Same reasoning as the image flow: the captured command text is
 	// valuable on its own, so if the caption window can't spawn the entry
 	// is still appended without a caption.
-	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font); err != nil {
+	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font, d.cfg.Popup.Position); err != nil {
 		d.logger.Printf("capture %s: popup: %v", source, err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
@@ -634,7 +634,7 @@ func readLastCommand() (string, error) {
 // and appends it to blog.md itself. There is no fallback entry — the note
 // text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
-	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font); err != nil {
+	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font, d.cfg.Popup.Position); err != nil {
 		d.logger.Printf("capture note: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return

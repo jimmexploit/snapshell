@@ -5,7 +5,8 @@ capture (and for raw notes) to collect an optional caption. It is a real
 **GUI window** (a zenity GTK form dialog) — there is no TUI anywhere in
 this mode. This is the shared tail-end referenced by the Alt+1 screenshot
 flow, the Alt+2 code flow, the Alt+3 raw-note flow, and the Alt+4
-selection flow.
+selection flow. It also owns moving the dialog to a configured screen
+position after it spawns (`[popup].position`).
 
 ## Design: one zenity dialog per mode, spawned by the daemon
 
@@ -56,6 +57,28 @@ space (verified against zenity 4.1.90 / libadwaita).
 
 Dynamic label text is escaped for Pango markup (`& < >` → entities) since
 zenity parses labels as markup.
+
+## Positioning (`[popup].position`)
+
+zenity has no `--geometry`, so a configured position is applied by moving
+the window after it maps: a background goroutine polls
+`xdotool search --name <title>` (the title comes from `dialogTitle(mode)`
+and must match the `--title` zenity shows) until the dialog appears, then
+`xdotool windowmove` places it. `position.go` owns this.
+
+- Accepts a named preset (`center`, `top-left`, `top-center`, `top-right`,
+  `center-left`, `center-right`, `bottom-left`, `bottom-center`,
+  `bottom-right`) resolved against `xdotool getdisplaygeometry` and the
+  dialog's own size, or explicit `X,Y` pixels from the screen's top-left.
+- Empty = leave placement to the window manager (no xdotool needed).
+- A configured position is **validated before zenity launches**: invalid
+  syntax errors, and a missing `xdotool` errors loudly naming the binary
+  (repo subprocess rule) — an unmoved window is never a silent failure.
+  The move itself is best-effort after that (polls ~5s; if the window
+  never maps, it's simply skipped). After the first `windowmove` the
+  result is **verified** against `xdotool getwindowgeometry` and re-moved
+  if zenity overwrote it while still mapping — one move is not assumed to
+  stick.
 
 ## Exit-code → result semantics
 

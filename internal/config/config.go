@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,13 @@ type CaptureConfig struct {
 	IncludeOutput *bool `toml:"include_output"`
 }
 
+// DefaultPopupWidth/Height are the reference popup dimensions. The 560:320
+// (1.75:1) ratio is what keep_ratio preserves.
+const (
+	DefaultPopupWidth  = 560
+	DefaultPopupHeight = 320
+)
+
 // PopupConfig configures the zenity caption/note window.
 type PopupConfig struct {
 	// Width sizes the caption window in pixels (0 = let zenity pick).
@@ -49,6 +57,19 @@ type PopupConfig struct {
 	// Font is a Pango font description (e.g. "Sans 13") for the text area
 	// the user types into. Empty = zenity's default font.
 	Font string `toml:"font"`
+	// KeepRatio locks the window to the default 560:320 aspect ratio: if
+	// the user changes only one dimension (width OR height) away from the
+	// default, the other is recomputed to preserve the ratio. Both set to
+	// non-default values are honored as-is. Default true. A *bool so an
+	// explicit `keep_ratio = false` survives the fill-in-defaults pass.
+	KeepRatio *bool `toml:"keep_ratio"`
+	// Position moves the dialog window to a spot on screen after it
+	// spawns. A named preset ("center", "top-left", "top-center",
+	// "top-right", "center-left", "center-right", "bottom-left",
+	// "bottom-center", "bottom-right") or explicit pixels from the
+	// top-left corner ("120,80"). Empty = leave placement to the window
+	// manager.
+	Position string `toml:"position"`
 }
 
 // PathsConfig configures where session folders live.
@@ -70,13 +91,20 @@ type KeymapConfig struct {
 // per-user location sessions land in (a leading "~/" is expanded by Load).
 func Default() *Config {
 	includeOutput := true
+	keepRatio := true
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
 		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
-		Popup:      PopupConfig{Width: 560, Height: 320, Font: "Sans 13"},
+		Popup:      PopupConfig{Width: DefaultPopupWidth, Height: DefaultPopupHeight, Font: "Sans 13", KeepRatio: &keepRatio},
 		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 	}
+}
+
+// KeepRatioOn reports whether the popup aspect-ratio lock is enabled
+// (default true).
+func (c *Config) KeepRatioOn() bool {
+	return c.Popup.KeepRatio != nil && *c.Popup.KeepRatio
 }
 
 // OutputIncluded reports whether Alt+2 should capture the command's full
@@ -126,6 +154,7 @@ func LoadFrom(path string) (*Config, error) {
 	}
 
 	fillDefaults(cfg)
+	normalizeKeepRatio(cfg)
 	expandCfg(cfg)
 	return cfg, nil
 }
@@ -190,6 +219,16 @@ const defaultFileText = `# snapshell configuration
   # Font of the text you type (Pango font description). Empty = zenity's
   # default. "Sans 13" is a comfortable step up from the 10pt desktop font.
   font = "Sans 13"
+  # Lock the window to the default 560:320 aspect ratio: change ONE of
+  # width/height and the other follows to keep the ratio. Set both to
+  # non-default values and both are honored. false = size each freely.
+  keep_ratio = true
+  # Where the popup window appears after spawning. A named preset
+  # ("center", "top-left", "top-center", "top-right", "center-left",
+  # "center-right", "bottom-left", "bottom-center", "bottom-right") or
+  # explicit pixels from the top-left corner ("120,80"). Empty = let the
+  # window manager place it. Requires xdotool.
+  position = ""
 
 [capture]
   # false = Alt+2 captures only the command line (and its prompt lines),
@@ -227,6 +266,12 @@ func fillDefaults(c *Config) {
 	if c.Popup.Height <= 0 {
 		c.Popup.Height = def.Popup.Height
 	}
+	if c.Popup.KeepRatio == nil {
+		c.Popup.KeepRatio = def.Popup.KeepRatio
+	}
+	if c.Popup.Position == "" {
+		c.Popup.Position = def.Popup.Position
+	}
 	if strings.TrimSpace(c.Keymaps.Screenshot) == "" {
 		c.Keymaps.Screenshot = def.Keymaps.Screenshot
 	}
@@ -241,6 +286,24 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot
+	}
+}
+
+// normalizeKeepRatio applies the popup aspect-ratio lock. When keep_ratio
+// is on, changing exactly one of width/height away from its default makes
+// the other follow so the 560:320 ratio always holds. Both dimensions
+// explicitly set to non-default values are honored as-is (the user
+// outranks the ratio), and neither being changed leaves them untouched.
+func normalizeKeepRatio(c *Config) {
+	if !c.KeepRatioOn() {
+		return
+	}
+	p := &c.Popup
+	switch {
+	case p.Width != DefaultPopupWidth && p.Height == DefaultPopupHeight:
+		p.Height = int(math.Round(float64(p.Width) * DefaultPopupHeight / DefaultPopupWidth))
+	case p.Height != DefaultPopupHeight && p.Width == DefaultPopupWidth:
+		p.Width = int(math.Round(float64(p.Height) * DefaultPopupWidth / DefaultPopupHeight))
 	}
 }
 

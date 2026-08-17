@@ -15,6 +15,16 @@ tool = "flameshot"        # or "mate-screenshot"
 width = 560               # caption window width in px (0 = let zenity pick)
 height = 320              # caption/note text area height in px (0 = let zenity pick)
 font = "Sans 13"          # Pango font for the text you type ("" = zenity default)
+keep_ratio = true         # lock the window to the default 560:320 aspect:
+                          #   change ONE of width/height away from its
+                          #   default and the other follows to keep the
+                          #   ratio; set both and both are honored
+position = ""             # where the dialog spawns: a preset ("center",
+                          #   "top-left", "top-center", "top-right",
+                          #   "center-left", "center-right", "bottom-left",
+                          #   "bottom-center", "bottom-right") or explicit
+                          #   pixels from the top-left ("120,80"); empty =
+                          #   let the WM place it. Requires xdotool.
 
 [capture]
 include_output = true     # false = Alt+2 captures only the command line
@@ -56,6 +66,13 @@ session_root = "~/.local/share/snapshell"
   can be concrete ("none of flameshot, mate-screenshot found on PATH")
   rather than vague. (zenity is not resolved here — `internal/popup` does
   its own `exec.LookPath` and names the missing binary itself.)
+- **`keep_ratio` is applied at load time** (`normalizeKeepRatio`): when on
+  (default), exactly one dimension changed away from the default
+  (`DefaultPopupWidth` 560 / `DefaultPopupHeight` 320) makes the other
+  follow so the 560:320 ratio holds; both non-default values are honored
+  as-is. `KeepRatioOn()` exposes the effective value. Popup position is
+  passed through to `internal/popup` verbatim — parsing/validation lives
+  there, not here.
 
 ## What NOT to do here
 

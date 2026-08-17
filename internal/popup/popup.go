@@ -59,7 +59,9 @@ type Result struct {
 // mode); text is the captured command+output text (code mode) or ignored
 // (note mode). width/height size the dialog in pixels (0 = zenity's own
 // choice); font is a Pango font description for the text area ("" = the
-// default font).
+// default font). position moves the dialog to a spot on screen after it
+// spawns (a preset like "center"/"top-right" or explicit pixels
+// "120,80"); empty leaves placement to the window manager.
 //
 // Empty or cancelled submit = "skip caption" for image/code (the entry is
 // still appended — losing an already-taken screenshot because the caption
@@ -70,11 +72,11 @@ type Result struct {
 // only path where a dismissed dialog loses the capture.
 //
 // Capture returns an error only on an infrastructure failure (zenity
-// missing, dialog failed to launch) — in that case nothing is appended and
-// the caller decides how to fall back. A user pressing cancel is not an
-// error.
-func Capture(mode, sessionDir, file, text string, width, height int, font string) error {
-	res, err := askDialog(mode, sessionDir, file, text, width, height, font)
+// missing, dialog failed to launch, a configured position that can't be
+// applied) — in that case nothing is appended and the caller decides how
+// to fall back. A user pressing cancel is not an error.
+func Capture(mode, sessionDir, file, text string, width, height int, font, position string) error {
+	res, err := askDialog(mode, sessionDir, file, text, width, height, font, position)
 	if err != nil {
 		return err
 	}
@@ -82,13 +84,39 @@ func Capture(mode, sessionDir, file, text string, width, height int, font string
 }
 
 // askDialog launches the zenity window and returns what the user did.
-func askDialog(mode, sessionDir, file, text string, width, height int, font string) (Result, error) {
+func askDialog(mode, sessionDir, file, text string, width, height int, font, position string) (Result, error) {
 	bin, err := resolveZenity()
 	if err != nil {
 		return Result{}, err
 	}
 
+	// A configured position must be valid before the dialog opens; missing
+	// xdotool is a loud, actionable error naming the binary (the repo's
+	// subprocess rule) rather than a silently unmoved window.
+	if position != "" {
+		if _, err := exec.LookPath("xdotool"); err != nil {
+			return Result{}, fmt.Errorf("xdotool not found on PATH — required to position the caption window (popup.position is set)")
+		}
+		if _, err := parsePosition(position); err != nil {
+			return Result{}, err
+		}
+	}
+
 	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height, font)...)
+	if position != "" {
+		// The dialog spawns unmoved; a background helper slides it into
+		// place as soon as it maps. Best-effort beyond the upfront
+		// validation — if the window never appears the move is simply
+		// skipped, the dialog itself is unaffected.
+		winW, winH := width, height
+		if winW <= 0 {
+			winW = 560
+		}
+		if winH <= 0 {
+			winH = 320
+		}
+		go moveDialog(dialogTitle(mode), position, winW, winH)
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err = cmd.Run()
@@ -139,7 +167,7 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 	case ModeImage:
 		label := describeImage(filepath.Join(sessionDir, file), file)
 		return append(args, "--text-info", "--editable",
-			"--title=snapshell — add screenshot",
+			"--title="+dialogTitle(mode),
 			"--text="+escapeMarkup(label),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
@@ -150,7 +178,7 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 		)
 	case ModeCode:
 		return append(args, "--text-info", "--editable",
-			"--title=snapshell — add command",
+			"--title="+dialogTitle(mode),
 			"--text="+escapeMarkup(truncatePreview(text)),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
@@ -161,17 +189,32 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 		)
 	case ModeNote:
 		return append(args, "--text-info", "--editable",
-			"--title=snapshell — note",
+			"--title="+dialogTitle(mode),
 			"--text=Write your note below, then press Save.",
 			"--ok-label=Save",
 			"--cancel-label=Discard",
 		)
 	default:
 		return append(args, "--text-info", "--editable",
-			"--title=snapshell",
+			"--title="+dialogTitle(mode),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
 		)
+	}
+}
+
+// dialogTitle returns the window title for a mode. The position mover
+// finds the dialog by this title, so it must match what zenity shows.
+func dialogTitle(mode string) string {
+	switch mode {
+	case ModeImage:
+		return "snapshell — add screenshot"
+	case ModeCode:
+		return "snapshell — add command"
+	case ModeNote:
+		return "snapshell — note"
+	default:
+		return "snapshell"
 	}
 }
 
