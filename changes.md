@@ -199,3 +199,11 @@ independently; a checkmark means done and verified.
       has no --geometry, so the window is moved after it maps by polling
       `xdotool search` + `windowmove`. Config values in effect before this
       change are preserved in `config-reference.md`.
+- [x] **21. Config reload: hotkey + per-capture** — two new options.
+      `[keymaps] reload = "Alt+5"` re-reads `config.toml` and re-grabs
+      hotkeys without restarting the daemon; `[capture]
+      reload_on_hotkey = false` (default off) does the same automatically
+      before every hotkey capture. The daemon keeps the live config in an
+      atomic pointer so reloading is safe while capture goroutines read it.
+      On a bad TOML the old config stays in place and the failure is
+      notified by name. Active session state is untouched by a reload.

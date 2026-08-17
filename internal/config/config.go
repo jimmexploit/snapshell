@@ -30,7 +30,8 @@ type ScreenshotConfig struct {
 	Tool string `toml:"tool"`
 }
 
-// CaptureConfig configures the Alt+2 tmux capture scope.
+// CaptureConfig configures the Alt+2 tmux capture scope and per-capture
+// config reloading.
 type CaptureConfig struct {
 	// IncludeOutput captures the command's full output alongside the
 	// prompt+command lines; when false only the prompt+command line(s) are
@@ -38,6 +39,10 @@ type CaptureConfig struct {
 	// the config file is preserved instead of being indistinguishable from
 	// a missing key.
 	IncludeOutput *bool `toml:"include_output"`
+	// ReloadOnHotkey re-reads the config file before every capture flow
+	// (Alt+1/2/3/4) so edits apply without restarting the daemon. Default
+	// false — the reload hotkey covers manual reloads.
+	ReloadOnHotkey *bool `toml:"reload_on_hotkey"`
 }
 
 // DefaultPopupWidth/Height are the reference popup dimensions. The 560:320
@@ -85,6 +90,9 @@ type KeymapConfig struct {
 	Command    string `toml:"command"`
 	Note       string `toml:"note"`
 	Selection  string `toml:"selection"`
+	// Reload re-reads the config file (and re-grabs hotkeys) without
+	// restarting the daemon.
+	Reload string `toml:"reload"`
 }
 
 // Default returns the built-in configuration values. SessionRoot is the
@@ -92,11 +100,12 @@ type KeymapConfig struct {
 func Default() *Config {
 	includeOutput := true
 	keepRatio := true
+	reloadOnHotkey := false
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
-		Capture:    CaptureConfig{IncludeOutput: &includeOutput},
+		Capture:    CaptureConfig{IncludeOutput: &includeOutput, ReloadOnHotkey: &reloadOnHotkey},
 		Popup:      PopupConfig{Width: DefaultPopupWidth, Height: DefaultPopupHeight, Font: "Sans 13", KeepRatio: &keepRatio},
-		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4"},
+		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 	}
 }
@@ -111,6 +120,12 @@ func (c *Config) KeepRatioOn() bool {
 // output (default true).
 func (c *Config) OutputIncluded() bool {
 	return c.Capture.IncludeOutput != nil && *c.Capture.IncludeOutput
+}
+
+// ReloadOnHotkeyOn reports whether the config file is re-read before each
+// capture flow (default false).
+func (c *Config) ReloadOnHotkeyOn() bool {
+	return c.Capture.ReloadOnHotkey != nil && *c.Capture.ReloadOnHotkey
 }
 
 // ConfigPath returns the default config file location.
@@ -234,6 +249,10 @@ const defaultFileText = `# snapshell configuration
   # false = Alt+2 captures only the command line (and its prompt lines),
   # skipping the command's output.
   include_output = true
+  # true = re-read this config file before every hotkey capture (Alt+1/2/3/4)
+  # so edits apply immediately. false = apply changes via the reload hotkey
+  # (or by restarting the daemon).
+  reload_on_hotkey = false
 
 [keymaps]
   # Global hotkeys. Format: modifiers separated by "+", then a key.
@@ -243,6 +262,8 @@ const defaultFileText = `# snapshell configuration
   screenshot = "Alt+1"
   command    = "Alt+2"
   note       = "Alt+3"
+  selection  = "Alt+4"
+  reload     = "Alt+5"   # re-read config + re-grab hotkeys, no restart
 
 [paths]
   # Where session folders (and their blog.md + attachments/) are stored.
@@ -259,6 +280,9 @@ func fillDefaults(c *Config) {
 	}
 	if c.Capture.IncludeOutput == nil {
 		c.Capture.IncludeOutput = def.Capture.IncludeOutput
+	}
+	if c.Capture.ReloadOnHotkey == nil {
+		c.Capture.ReloadOnHotkey = def.Capture.ReloadOnHotkey
 	}
 	if c.Popup.Width <= 0 {
 		c.Popup.Width = def.Popup.Width
@@ -283,6 +307,9 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Keymaps.Selection) == "" {
 		c.Keymaps.Selection = def.Keymaps.Selection
+	}
+	if strings.TrimSpace(c.Keymaps.Reload) == "" {
+		c.Keymaps.Reload = def.Keymaps.Reload
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot

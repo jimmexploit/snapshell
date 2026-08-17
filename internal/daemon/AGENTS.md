@@ -16,7 +16,8 @@ it (the CLI).
      assuming stale — don't blindly delete a socket someone else might be
      using).
    - Load config (`internal/config`).
-   - Register X11 global hotkey grabs (`internal/hotkeys`) for Alt+1/2/3/4.
+   - Register X11 global hotkey grabs (`internal/hotkeys`) for Alt+1/2/3/4/5
+     (Alt+5 = config reload).
    - Log "daemon started, pid=N" to the daemon log.
 2. Hold active session state in memory: session name, session folder path,
    incrementing attachment counter (for `NNN.png` naming — zero-padded to
@@ -52,6 +53,30 @@ it (the CLI).
 5. On `daemon stop` (via IPC) or SIGTERM/SIGINT: release X11 hotkey grabs,
    close the socket listener, remove the PID file, remove the socket file,
    flush the log, exit 0.
+
+## Config reload (Alt+5 hotkey, `reload_on_hotkey`)
+
+The daemon keeps the loaded config in an atomic pointer (`d.cfg`, an
+`atomic.Pointer[config.Config]`) because capture goroutines and a reload
+swap it concurrently. Reloading never touches session state — the active
+session keeps its folder; only subsequent captures use new values.
+
+- The `reload` hotkey (`[keymaps].reload`, default Alt+5) re-reads
+  `~/.config/snapshell/config.toml` via `config.Load()` (the `loadConfig`
+  field is overridable in tests). On success: swap `d.cfg`, notify
+  "config reloaded", then **re-grab hotkeys** (`reregisterHotkeys`:
+  call the old `unregHook`, then `registerHotkeys` again) so keymap
+  edits apply without restarting. Re-grab failures are logged + notified
+  but are not fatal — the reload itself succeeded.
+- On failure (bad TOML, ...) the old config stays in place and a
+  "config reload failed" notification names the error.
+- `[capture].reload_on_hotkey = true` (default false) calls the same
+  reload before every capture flow, so config edits apply immediately
+  without pressing the reload key. Both paths share `reloadConfig`.
+- Hotkey handlers (`internal/hotkeys`) are re-entrant by design: the
+  reload handler is invoked from the dispatcher of the *current* grab;
+  `unregister`/re-grab happens from that handler goroutine, which the
+  event loop does not block on (see `internal/hotkeys/AGENTS.md`).
 
 ## Crash recovery
 

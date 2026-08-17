@@ -22,8 +22,11 @@ func TestLoadCreatesDefaultFile(t *testing.T) {
 	if cfg.Popup.Width != 560 || cfg.Popup.Height != 320 || cfg.Popup.Font != "Sans 13" {
 		t.Fatalf("popup = %+v, want width 560 height 320 font Sans 13", cfg.Popup)
 	}
-	if cfg.Keymaps.Screenshot != "Alt+1" || cfg.Keymaps.Command != "Alt+2" || cfg.Keymaps.Note != "Alt+3" || cfg.Keymaps.Selection != "Alt+4" {
-		t.Fatalf("keymaps = %+v, want Alt+1/Alt+2/Alt+3/Alt+4", cfg.Keymaps)
+	if cfg.Keymaps.Screenshot != "Alt+1" || cfg.Keymaps.Command != "Alt+2" || cfg.Keymaps.Note != "Alt+3" || cfg.Keymaps.Selection != "Alt+4" || cfg.Keymaps.Reload != "Alt+5" {
+		t.Fatalf("keymaps = %+v, want Alt+1/Alt+2/Alt+3/Alt+4/Alt+5", cfg.Keymaps)
+	}
+	if cfg.ReloadOnHotkeyOn() {
+		t.Fatal("reload_on_hotkey should default to false")
 	}
 	home, _ := os.UserHomeDir()
 	if cfg.Paths.SessionRoot != filepath.Join(home, ".local", "share", "snapshell") {
@@ -275,9 +278,45 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right"} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\""} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}
+	}
+}
+
+func TestReloadConfigKeys(t *testing.T) {
+	cfg := loadPopup(t, "width = 560\nheight = 320\n")
+	if cfg.Keymaps.Reload != "Alt+5" {
+		t.Fatalf("reload keymap = %q, want default Alt+5", cfg.Keymaps.Reload)
+	}
+	if cfg.ReloadOnHotkeyOn() {
+		t.Fatal("reload_on_hotkey should default to false")
+	}
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[capture]\nreload_on_hotkey = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if !cfg.ReloadOnHotkeyOn() {
+		t.Fatal("explicit reload_on_hotkey = true should be honored")
+	}
+
+	// Keymap fills from defaults when the key is absent, and honors it when
+	// present under [keymaps].
+	path = filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[keymaps]\nreload = \"F5\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.Keymaps.Reload != "F5" {
+		t.Fatalf("reload keymap = %q, want configured F5", cfg.Keymaps.Reload)
 	}
 }

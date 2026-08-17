@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"snapshell/internal/blog"
@@ -66,7 +67,17 @@ type Daemon struct {
 	sessionRoot string
 
 	// cfg is the loaded configuration (screenshot tool, popup size, ...).
-	cfg *config.Config
+	// It is an atomic pointer because the reload hotkey / reload_on_hotkey
+	// swap it out while capture goroutines are reading it concurrently.
+	cfg atomic.Pointer[config.Config]
+
+	// loadConfig reads the config file; overridable in tests. Defaults to
+	// config.Load.
+	loadConfig func() (*config.Config, error)
+
+	// hotkeysDisabled mirrors Options.DisableHotkeys so reload can skip
+	// re-grabbing keys in test mode.
+	hotkeysDisabled bool
 
 	// screenshotFallbackWarn dedupes the one-time flameshot-fallback warning.
 	screenshotFallbackWarn sync.Once
@@ -111,12 +122,14 @@ func Run(opts Options) error {
 	d := &Daemon{
 		shutdown:          make(chan struct{}),
 		sessionRoot:       sessionRoot,
-		cfg:               cfg,
+		cfg:               atomic.Pointer[config.Config]{},
+		loadConfig:        config.Load,
 		sockPath:          filepath.Join(stateDir, "daemon.sock"),
 		pidPath:           filepath.Join(stateDir, "daemon.pid"),
 		logPath:           filepath.Join(stateDir, "daemon.log"),
 		activeSessionPath: filepath.Join(stateDir, "activesession"),
 	}
+	d.cfg.Store(cfg)
 
 	if err := d.start(opts.DisableHotkeys); err != nil {
 		return err
@@ -170,6 +183,7 @@ func (d *Daemon) start(disableHotkeys bool) error {
 	d.listener = ln
 
 	d.captureHandler = d.dispatchCapture
+	d.hotkeysDisabled = disableHotkeys
 
 	if !disableHotkeys {
 		if err := d.registerHotkeys(); err != nil {
@@ -184,22 +198,25 @@ func (d *Daemon) start(disableHotkeys bool) error {
 	return nil
 }
 
-// registerHotkeys grabs the configured global hotkeys (default Alt+1/2/3/4).
+// registerHotkeys grabs the configured global hotkeys (default Alt+1/2/3/4/5).
 // Grab failures are reported but do not abort the daemon — the daemon stays
 // usable for session/IPC purposes.
 func (d *Daemon) registerHotkeys() error {
+	cfg := d.cfg.Load()
 	unregister, err := hotkeys.GrabAll(
 		map[string]string{
-			"screenshot": d.cfg.Keymaps.Screenshot,
-			"code":       d.cfg.Keymaps.Command,
-			"note":       d.cfg.Keymaps.Note,
-			"selection":  d.cfg.Keymaps.Selection,
+			"screenshot": cfg.Keymaps.Screenshot,
+			"code":       cfg.Keymaps.Command,
+			"note":       cfg.Keymaps.Note,
+			"selection":  cfg.Keymaps.Selection,
+			"reload":     cfg.Keymaps.Reload,
 		},
 		map[string]hotkeys.Handler{
 			"screenshot": func() { d.onHotkey("screenshot") },
 			"code":       func() { d.onHotkey("code") },
 			"note":       func() { d.onHotkey("note") },
 			"selection":  func() { d.onHotkey("selection") },
+			"reload":     func() { d.reloadConfig() },
 		},
 	)
 	if err != nil {
@@ -224,10 +241,51 @@ func (d *Daemon) onHotkey(kind string) {
 		_ = notify.Send("snapshell", "no active snapshell session — run 'snapshell start <name>' first")
 		return
 	}
+	// reload_on_hotkey: pick up config edits before this capture runs.
+	if d.cfg.Load().ReloadOnHotkeyOn() {
+		d.reloadConfig()
+	}
 	if d.captureHandler == nil {
 		return
 	}
 	go d.captureHandler(kind, s)
+}
+
+// reloadConfig re-reads the config file and applies it live, then re-grabs
+// hotkeys so keymap changes take effect. Config reloading is independent of
+// session state: the active session keeps its folder, only new captures use
+// the new values.
+func (d *Daemon) reloadConfig() {
+	load := d.loadConfig
+	if load == nil {
+		load = config.Load
+	}
+	loaded, err := load()
+	if err != nil {
+		d.logger.Printf("reload: %v", err)
+		_ = notify.Send("snapshell", "config reload failed: "+err.Error())
+		return
+	}
+	d.cfg.Store(loaded)
+	d.logger.Printf("reload: config applied")
+	_ = notify.Send("snapshell", "config reloaded")
+	d.reregisterHotkeys()
+}
+
+// reregisterHotkeys drops the current X11 grabs and grabs again from the
+// (possibly changed) config. No-op when hotkeys are disabled.
+func (d *Daemon) reregisterHotkeys() {
+	if d.hotkeysDisabled {
+		return
+	}
+	if d.unregHook != nil {
+		d.unregHook()
+		d.unregHook = nil
+	}
+	if err := d.registerHotkeys(); err != nil {
+		d.logger.Printf("reload: hotkey grab failed: %v", err)
+		_ = notify.Send("snapshell", "config reloaded, but some hotkeys failed to grab: "+err.Error())
+	}
 }
 
 func openLog(path string) *log.Logger {
@@ -531,15 +589,15 @@ func (d *Daemon) nextAttachment(s *Session) int {
 func (d *Daemon) captureScreenshot(s *Session) {
 	num := d.nextAttachment(s)
 
-	tool, err := d.cfg.ResolveScreenshotTool()
+	tool, err := d.cfg.Load().ResolveScreenshotTool()
 	if err != nil {
 		d.logger.Printf("capture screenshot: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return
 	}
-	if tool != d.cfg.Screenshot.Tool {
+	if tool != d.cfg.Load().Screenshot.Tool {
 		d.screenshotFallbackWarn.Do(func() {
-			d.logger.Printf("capture: %s not found on PATH — falling back to %s", d.cfg.Screenshot.Tool, tool)
+			d.logger.Printf("capture: %s not found on PATH — falling back to %s", d.cfg.Load().Screenshot.Tool, tool)
 		})
 	}
 
@@ -558,7 +616,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	// ignored dialog never blocks the daemon or the next hotkey press.
 	// The dialog failing must not lose the screenshot that was just taken:
 	// it is still appended, just without a caption.
-	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font, d.cfg.Popup.Position); err != nil {
+	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position); err != nil {
 		d.logger.Printf("capture screenshot: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath}); err != nil {
@@ -572,7 +630,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 // text (from the command log when in tmux, otherwise the shell hook's
 // recorded command) → popup caption → entry appended to blog.md.
 func (d *Daemon) captureCode(s *Session) {
-	res, err := tmuxcap.Capture(d.sessionLogPath(s.Name), d.cfg.OutputIncluded())
+	res, err := tmuxcap.Capture(d.sessionLogPath(s.Name), d.cfg.Load().OutputIncluded())
 	if err != nil {
 		if !errors.Is(err, tmuxcap.ErrNotInTmux) {
 			// In tmux but nothing captured (empty command log, bad record):
@@ -610,7 +668,7 @@ func (d *Daemon) appendCodeEntry(s *Session, text, source string) {
 	// Same reasoning as the image flow: the captured command text is
 	// valuable on its own, so if the caption window can't spawn the entry
 	// is still appended without a caption.
-	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font, d.cfg.Popup.Position); err != nil {
+	if err := popup.Capture(popup.ModeCode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position); err != nil {
 		d.logger.Printf("capture %s: popup: %v", source, err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
@@ -634,7 +692,7 @@ func readLastCommand() (string, error) {
 // and appends it to blog.md itself. There is no fallback entry — the note
 // text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
-	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Popup.Width, d.cfg.Popup.Height, d.cfg.Popup.Font, d.cfg.Popup.Position); err != nil {
+	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position); err != nil {
 		d.logger.Printf("capture note: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return

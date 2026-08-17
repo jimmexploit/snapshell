@@ -3,7 +3,10 @@ package daemon
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -229,6 +232,98 @@ func TestMalformedRequest(t *testing.T) {
 
 // TestConcurrentStartStop hammers the daemon with concurrent IPC requests
 // to catch data races on session state. Run with -race.
+func TestReloadConfigApplies(t *testing.T) {
+	d := &Daemon{
+		hotkeysDisabled:   true,
+		logger:            log.New(io.Discard, "", 0),
+		activeSessionPath: filepath.Join(t.TempDir(), "activesession"),
+	}
+	d.cfg.Store(testConfig(t, t.TempDir()))
+
+	calls := 0
+	d.loadConfig = func() (*config.Config, error) {
+		calls++
+		cfg := testConfig(t, t.TempDir())
+		cfg.Popup.Width = 999
+		return cfg, nil
+	}
+
+	d.reloadConfig()
+
+	if calls != 1 {
+		t.Fatalf("loadConfig called %d times, want 1", calls)
+	}
+	if got := d.cfg.Load().Popup.Width; got != 999 {
+		t.Fatalf("width = %d after reload, want reloaded 999", got)
+	}
+}
+
+func TestReloadConfigFailureKeepsOldConfig(t *testing.T) {
+	d := &Daemon{hotkeysDisabled: true, logger: log.New(io.Discard, "", 0)}
+	d.cfg.Store(testConfig(t, t.TempDir()))
+	d.loadConfig = func() (*config.Config, error) { return nil, errors.New("parse error") }
+
+	d.reloadConfig()
+
+	if got := d.cfg.Load().Popup.Width; got != 560 {
+		t.Fatalf("width = %d after failed reload, want untouched 560", got)
+	}
+}
+
+func TestOnHotkeyReloadsWhenEnabled(t *testing.T) {
+	d := &Daemon{hotkeysDisabled: true, logger: log.New(io.Discard, "", 0)}
+	cfg := testConfig(t, t.TempDir())
+	reloadOn := true
+	cfg.Capture.ReloadOnHotkey = &reloadOn
+	d.cfg.Store(cfg)
+	d.mu.Lock()
+	d.session = &Session{Name: "acme", Dir: t.TempDir()}
+	d.mu.Unlock()
+
+	reloaded := false
+	d.loadConfig = func() (*config.Config, error) {
+		reloaded = true
+		return testConfig(t, t.TempDir()), nil
+	}
+	captured := make(chan string, 1)
+	d.captureHandler = func(kind string, s *Session) { captured <- kind }
+
+	d.onHotkey("note")
+
+	select {
+	case kind := <-captured:
+		if kind != "note" {
+			t.Fatalf("captured kind %q, want note", kind)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("capture handler not invoked")
+	}
+	if !reloaded {
+		t.Fatal("reload_on_hotkey should reload config before capturing")
+	}
+}
+
+func TestOnHotkeySkipsReloadWhenDisabled(t *testing.T) {
+	d := &Daemon{hotkeysDisabled: true, logger: log.New(io.Discard, "", 0)}
+	d.cfg.Store(testConfig(t, t.TempDir())) // reload_on_hotkey defaults off
+	d.mu.Lock()
+	d.session = &Session{Name: "acme", Dir: t.TempDir()}
+	d.mu.Unlock()
+
+	reloaded := false
+	d.loadConfig = func() (*config.Config, error) {
+		reloaded = true
+		return testConfig(t, t.TempDir()), nil
+	}
+	d.captureHandler = func(kind string, s *Session) {}
+
+	d.onHotkey("note")
+	time.Sleep(100 * time.Millisecond)
+	if reloaded {
+		t.Fatal("reload_on_hotkey disabled, but config was reloaded")
+	}
+}
+
 func TestConcurrentStartStop(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	sessionRoot := t.TempDir()

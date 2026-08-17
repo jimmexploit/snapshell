@@ -28,12 +28,14 @@ position = ""             # where the dialog spawns: a preset ("center",
 
 [capture]
 include_output = true     # false = Alt+2 captures only the command line
+reload_on_hotkey = false  # true = re-read config before every hotkey capture
 
 [keymaps]
 screenshot = "Alt+1"      # global hotkeys; Alt=Mod1, Ctrl=Control,
 command    = "Alt+2"      # Super/Win=Mod4, raw Mod1..Mod5 accepted too
 note       = "Alt+3"
 selection  = "Alt+4"      # capture selected text (clipboard fallback)
+reload     = "Alt+5"      # re-read config + re-grab hotkeys, no restart
 
 [paths]
 session_root = "~/.local/share/snapshell"
@@ -73,6 +75,11 @@ session_root = "~/.local/share/snapshell"
   as-is. `KeepRatioOn()` exposes the effective value. Popup position is
   passed through to `internal/popup` verbatim — parsing/validation lives
   there, not here.
+- **Config reloading is a daemon concern, but this package is the reload
+  source**: the daemon calls `Load()` again to get a fresh `*Config` and
+  swaps it atomically (see `internal/daemon/AGENTS.md`). `ReloadOnHotkeyOn()`
+  and `OutputIncluded()` are the *bool accessors used to drive that
+  decision.
 
 ## What NOT to do here
 
