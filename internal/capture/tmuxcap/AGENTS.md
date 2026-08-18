@@ -38,7 +38,7 @@ command text itself is the capture — unless it ran in a kitty window with
 shell integration enabled (`ktty` record), in which case its output is read
 back from that window with `kitty @ --to <listen> get-text --match
 id:<kittywid> --extent last_cmd_output`. Each session has its own log at
-`<session_root>/logs/<name>/commands.log` (the daemon points the hook at it
+`<session_root>/logs/<name>/markers.logs` (the daemon points the hook at it
 via the `~/.local/state/snapshell/activesession` pointer), so every session
 keeps its own full command history. Alt+2 reads the **last line** of the
 active session's log and dispatches on the first field: a `%` pane id → run
@@ -64,8 +64,8 @@ text as always).
 
 ## Flow
 
-1. Read the last line of the active session's command log
-   (`<session_root>/logs/<name>/commands.log`, passed in by the daemon).
+1. Read the last line of the active session's marker-record log
+   (`<session_root>/logs/<name>/markers.logs`, passed in by the daemon).
    Skip torn/invalid lines and fall back to the previous valid record.
    - Plain record (`tty ...`): return the command text directly (no tmux
      involved — works even when the tmux binary is absent).

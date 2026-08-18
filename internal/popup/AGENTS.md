@@ -137,10 +137,12 @@ just notify). A user pressing cancel is not an error.
 ## Caption placement in blog.md
 
 Actual Markdown formatting (caption line relative to the image/code block,
-timestamp comment format, etc.) is `internal/blog`'s responsibility, not
-this package's — this package's job ends at "here is the caption string
-(possibly empty) and here is the path/text that was captured," handed off
-as a simple function call into `internal/blog`.
+etc.) is `internal/blog`'s responsibility, not this package's — this
+package's job ends at "here is the caption string (possibly empty) and
+here is the path/text that was captured," handed off as a simple function
+call into `internal/blog`. The caption goes **above** the block by default;
+`popup.Capture` receives a `captionAfter bool` (from `[blog].caption_position`)
+and threads it through to `blog.Append` so captions can sit below instead.
 
 ## What NOT to do here
 

@@ -135,7 +135,9 @@ func (q *Queue) Len() int {
 // mode uses (image/code entry, optional caption) and removes it from the
 // queue. An empty caption means append as-is. The blog append happens first
 // — if it fails the card stays queued so a retry can't double-write.
-func (q *Queue) Commit(id int, caption string) error {
+// captionAfter places the caption below the image/code block in blog.md
+// instead of above it (the default).
+func (q *Queue) Commit(id int, caption string, captionAfter bool) error {
 	q.mu.Lock()
 	i := q.index(id)
 	if i < 0 {
@@ -147,9 +149,9 @@ func (q *Queue) Commit(id int, caption string) error {
 	var err error
 	switch c.Kind {
 	case KindImage:
-		err = blog.Append(q.dir, blog.Entry{Kind: blog.KindImage, Caption: caption, ImagePath: c.Path})
+		err = blog.Append(q.dir, blog.Entry{Kind: blog.KindImage, Caption: caption, ImagePath: c.Path, CaptionAfter: captionAfter})
 	case KindCode:
-		err = blog.Append(q.dir, blog.Entry{Kind: blog.KindCode, Caption: caption, CodeText: c.Text})
+		err = blog.Append(q.dir, blog.Entry{Kind: blog.KindCode, Caption: caption, CodeText: c.Text, CaptionAfter: captionAfter})
 	default:
 		q.mu.Unlock()
 		return fmt.Errorf("cannot commit unknown card kind %q", c.Kind)

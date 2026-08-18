@@ -64,7 +64,7 @@ func TestKittyEscapeThroughRealRenderer(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		p.Send(tea.WindowSizeMsg{Width: 140, Height: 50})
 		time.Sleep(100 * time.Millisecond)
-		p.Send(tea.KeyMsg{Type: tea.KeyDown})  // select the image card
+		p.Send(tea.KeyMsg{Type: tea.KeyDown}) // select the image card
 		time.Sleep(200 * time.Millisecond)
 		p.Send(tea.KeyMsg{Type: tea.KeyEnter}) // full-screen image view
 		time.Sleep(300 * time.Millisecond)

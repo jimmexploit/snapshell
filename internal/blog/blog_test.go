@@ -43,8 +43,8 @@ func TestImageEntryNoCaption(t *testing.T) {
 	if !strings.Contains(out, "![](attachments/001.png)") {
 		t.Fatalf("missing image line:\n%s", out)
 	}
-	if !strings.Contains(out, "<!-- ") || !strings.Contains(out, " -->") {
-		t.Fatalf("missing timestamp comment:\n%s", out)
+	if strings.Contains(out, "<!--") {
+		t.Fatalf("no timestamp comment should be emitted:\n%s", out)
 	}
 }
 
@@ -75,6 +75,23 @@ func TestCodeEntry(t *testing.T) {
 	}
 	if !strings.Contains(out, "scan\n```bash") {
 		t.Fatalf("caption not directly above code block:\n%s", out)
+	}
+}
+
+func TestCodeEntryCaptionBelow(t *testing.T) {
+	dir := t.TempDir()
+	text := "$ whoami\nroot\n"
+	out := writeEntries(t, dir, Entry{Kind: KindCode, Caption: "whoami says root", CodeText: text, CaptionAfter: true})
+	if !strings.Contains(out, "```bash\n"+text+"```\nwhoami says root") {
+		t.Fatalf("caption not directly below code block:\n%s", out)
+	}
+}
+
+func TestImageEntryCaptionBelow(t *testing.T) {
+	dir := t.TempDir()
+	out := writeEntries(t, dir, Entry{Kind: KindImage, Caption: "initial foothold", ImagePath: "attachments/003.png", CaptionAfter: true})
+	if !strings.Contains(out, "![](attachments/003.png)\ninitial foothold") {
+		t.Fatalf("caption not directly below image:\n%s", out)
 	}
 }
 
@@ -114,7 +131,7 @@ func TestEntriesSeparatedByBlankLine(t *testing.T) {
 		Entry{Kind: KindNote, NoteText: "one"},
 		Entry{Kind: KindNote, NoteText: "two"},
 	)
-	if !strings.Contains(out, "one\n\n<!-- ") {
+	if !strings.Contains(out, "one\n\ntwo\n") {
 		t.Fatalf("entries not separated by exactly one blank line:\n%q", out)
 	}
 }

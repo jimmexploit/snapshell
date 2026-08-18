@@ -112,7 +112,7 @@ func TestCommitImageWritesBlogAndRemovesCard(t *testing.T) {
 	if err := q.AppendImage("attachments/001.png"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Commit(1, "the attack"); err != nil {
+	if err := q.Commit(1, "the attack", false); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if q.Len() != 0 {
@@ -144,7 +144,7 @@ func TestCommitCodeNoCaptionAppendsAsIs(t *testing.T) {
 	if err := q.AppendCode("curl -s http://host/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Commit(1, ""); err != nil {
+	if err := q.Commit(1, "", false); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
@@ -220,7 +220,7 @@ func TestCommitDiscardUnknownID(t *testing.T) {
 	if err := q.AppendCode("cmd"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Commit(99, ""); err == nil {
+	if err := q.Commit(99, "", false); err == nil {
 		t.Fatal("commit of unknown id should fail")
 	}
 	if err := q.Discard(99); err == nil {
@@ -252,7 +252,7 @@ func TestCommitFormattingContract(t *testing.T) {
 	if err := q.AppendCode("$ whoami\njimmex\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Commit(1, "spotted a user"); err != nil {
+	if err := q.Commit(1, "spotted a user", false); err != nil {
 		t.Fatal(err)
 	}
 

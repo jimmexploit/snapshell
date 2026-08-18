@@ -94,13 +94,13 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatalf("attachments dir not created: %v", err)
 	}
 	// The active-session pointer points the shell hook at this session's
-	// command log under <session_root>/logs/<name>/commands.log.
+	// marker-record log under <session_root>/logs/<name>/markers.logs.
 	pointerPath := filepath.Join(stateDir, "activesession")
 	pointer, err := os.ReadFile(pointerPath)
 	if err != nil {
 		t.Fatalf("read activesession pointer: %v", err)
 	}
-	wantLog := filepath.Join(sessionRoot, "logs", "acme", "commands.log")
+	wantLog := filepath.Join(sessionRoot, "logs", "acme", "markers.logs")
 	if string(pointer) != wantLog {
 		t.Fatalf("activesession = %q, want %q", string(pointer), wantLog)
 	}

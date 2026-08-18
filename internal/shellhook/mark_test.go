@@ -193,8 +193,8 @@ func TestMarkEndWithoutStartAppendsNothing(t *testing.T) {
 func TestMarkEndRoutesToActiveSessionLog(t *testing.T) {
 	stateFile := setUp(t, "0 5")
 	// Simulate an active session: the daemon pointed activesession at this
-	// session's log under <session_root>/logs/<name>/commands.log.
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme-box", "commands.log")
+	// session's log under <session_root>/logs/<name>/markers.logs.
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme-box", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -303,8 +303,8 @@ func TestRecordCommand(t *testing.T) {
 func TestRecordCommandAppendsToSessionHistory(t *testing.T) {
 	setUp(t, "0 5")
 	// Simulate an active session: the daemon pointed activesession at this
-	// session's commands.log, so history goes next to it.
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme-box", "commands.log")
+	// session's markers.logs marker log, so history goes next to it.
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme-box", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestRecordCommandAppendsToSessionHistory(t *testing.T) {
 
 func TestRecordCommandPlainSourceAppendsTtyRecord(t *testing.T) {
 	setUp(t, "0 5")
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -356,9 +356,42 @@ func TestRecordCommandPlainSourceAppendsTtyRecord(t *testing.T) {
 	}
 }
 
+func TestRecordCommandWritesLiveTranscript(t *testing.T) {
+	setUp(t, "0 5")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "markers.logs")
+	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A plain-terminal command appends a readable transcript entry to
+	// commands.logs next to the record log: a timestamp+source header line
+	// followed by the command text.
+	if err := RecordCommand("/dev/pts/5", "", "", "cat ~/blog.md"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(sessLog), "commands.logs"))
+	if err != nil {
+		t.Fatalf("read commands.logs: %v", err)
+	}
+	if !strings.Contains(string(data), "/dev/pts/5") || !strings.Contains(string(data), "cat ~/blog.md") {
+		t.Fatalf("transcript missing header or command text:\n%s", data)
+	}
+
+	// A kitty command that can't reach a kitty socket falls back to the
+	// command text alone (best-effort — a failed output read drops only the
+	// output, never the transcript entry).
+	if err := RecordCommand("/dev/pts/9", "3", "unix:/tmp/nope-kitty", "whoami"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(filepath.Dir(sessLog), "commands.logs"))
+	if !strings.Contains(string(data), "whoami") {
+		t.Fatalf("kitty transcript missing command text:\n%s", data)
+	}
+}
+
 func TestRecordCommandKittySourceAppendsKttyRecord(t *testing.T) {
 	setUp(t, "0 5")
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +413,7 @@ func TestRecordCommandKittySourceAppendsKttyRecord(t *testing.T) {
 
 func TestRecordCommandTmuxSourceSkipsCommandLog(t *testing.T) {
 	setUp(t, "0 5")
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +430,7 @@ func TestRecordCommandTmuxSourceSkipsCommandLog(t *testing.T) {
 
 func TestRecordCommandEmptyTextIgnored(t *testing.T) {
 	setUp(t, "0 5")
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +447,7 @@ func TestRecordCommandEmptyTextIgnored(t *testing.T) {
 
 func TestRecordCommandCollapsesNewlines(t *testing.T) {
 	setUp(t, "0 5")
-	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "commands.log")
+	sessLog := filepath.Join(t.TempDir(), "logs", "acme", "markers.logs")
 	if err := os.WriteFile(activeSessionPath(), []byte(sessLog), 0o600); err != nil {
 		t.Fatal(err)
 	}

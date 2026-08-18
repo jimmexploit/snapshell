@@ -36,8 +36,12 @@ it (the CLI).
      the config's `[paths]` (default `~/.local/share/snapshell`).
      Starting a session also creates `<session_root>/logs/<name>/` and
      writes the active-session pointer (`~/.local/state/snapshell/
-     activesession`) to that session's `commands.log` path, so the shell
-     hook records every completed command into that session's own log.
+     activesession`) to that session's `markers.logs` path, so the shell
+     hook records every completed command into that session's own log
+     (markers.logs for Alt+2 records, commands.logs for the live
+     per-command transcript, commands.history for the one-line history).
+     The `start` response and `status` report the session folder so the
+     user can always find blog.md.
    - `stop`: clear active session state and remove the active-session
      pointer. Hotkeys remain grabbed (daemon keeps running) but their
      handlers become no-ops with a `notify-send` "no active snapshell

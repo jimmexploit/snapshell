@@ -11,7 +11,7 @@ import (
 func TestApplyNote(t *testing.T) {
 	dir := t.TempDir()
 	res := Result{Text: "found port 445 open", Submitted: true}
-	if err := applyResult(ModeNote, res, "", "", dir); err != nil {
+	if err := applyResult(ModeNote, res, "", "", dir, false); err != nil {
 		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
@@ -30,7 +30,7 @@ func TestApplyEmptyOrCancelledNoteDiscards(t *testing.T) {
 		"cancelled and text": {Text: "", Submitted: false},
 	} {
 		dir := t.TempDir()
-		if err := applyResult(ModeNote, res, "", "", dir); err != nil {
+		if err := applyResult(ModeNote, res, "", "", dir, false); err != nil {
 			t.Fatalf("%s: applyResult: %v", name, err)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "blog.md")); !os.IsNotExist(err) {
@@ -42,7 +42,7 @@ func TestApplyEmptyOrCancelledNoteDiscards(t *testing.T) {
 func TestApplyImageWithCaption(t *testing.T) {
 	dir := t.TempDir()
 	res := Result{Text: "rooted it", Submitted: true}
-	if err := applyResult(ModeImage, res, "attachments/001.png", "", dir); err != nil {
+	if err := applyResult(ModeImage, res, "attachments/001.png", "", dir, false); err != nil {
 		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
@@ -57,6 +57,18 @@ func TestApplyImageWithCaption(t *testing.T) {
 	}
 }
 
+func TestApplyImageCaptionBelow(t *testing.T) {
+	dir := t.TempDir()
+	res := Result{Text: "initial foothold", Submitted: true}
+	if err := applyResult(ModeImage, res, "attachments/001.png", "", dir, true); err != nil {
+		t.Fatalf("applyResult: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
+	if !strings.Contains(string(data), "![](attachments/001.png)\ninitial foothold") {
+		t.Fatalf("want caption below image, got %q", data)
+	}
+}
+
 func TestApplyImageNoCaption(t *testing.T) {
 	// Cancelling the caption window still records the screenshot.
 	for name, res := range map[string]Result{
@@ -64,7 +76,7 @@ func TestApplyImageNoCaption(t *testing.T) {
 		"cancelled":       {Text: "", Submitted: false},
 	} {
 		dir := t.TempDir()
-		if err := applyResult(ModeImage, res, "attachments/001.png", "", dir); err != nil {
+		if err := applyResult(ModeImage, res, "attachments/001.png", "", dir, false); err != nil {
 			t.Fatalf("%s: applyResult: %v", name, err)
 		}
 		data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
@@ -81,7 +93,7 @@ func TestApplyCode(t *testing.T) {
 	dir := t.TempDir()
 	res := Result{Text: "port scan", Submitted: true}
 	text := "┌─[root@box]# nmap -sV 10.10.11.5\n22/tcp open  ssh\n"
-	if err := applyResult(ModeCode, res, "", text, dir); err != nil {
+	if err := applyResult(ModeCode, res, "", text, dir, false); err != nil {
 		t.Fatalf("applyResult: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
@@ -94,7 +106,7 @@ func TestApplyCode(t *testing.T) {
 
 func TestApplyCodeCancelledStillAppends(t *testing.T) {
 	dir := t.TempDir()
-	if err := applyResult(ModeCode, Result{Submitted: false}, "", "whoami\nroot\n", dir); err != nil {
+	if err := applyResult(ModeCode, Result{Submitted: false}, "", "whoami\nroot\n", dir, false); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
@@ -111,7 +123,7 @@ func TestApplyImageAbortedDeletesScreenshot(t *testing.T) {
 
 	// The extra "Cancel" button must delete the already-captured screenshot
 	// AND leave no blog.md entry behind.
-	if err := applyResult(ModeImage, Result{Submitted: false, Aborted: true}, "attachments/001.png", "", dir); err != nil {
+	if err := applyResult(ModeImage, Result{Submitted: false, Aborted: true}, "attachments/001.png", "", dir, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(img); !os.IsNotExist(err) {
@@ -125,7 +137,7 @@ func TestApplyImageAbortedDeletesScreenshot(t *testing.T) {
 func TestApplyImageAbortedMissingFileIsFine(t *testing.T) {
 	// Deleting a screenshot whose file was never written must not error.
 	dir := t.TempDir()
-	if err := applyResult(ModeImage, Result{Aborted: true}, "attachments/001.png", "", dir); err != nil {
+	if err := applyResult(ModeImage, Result{Aborted: true}, "attachments/001.png", "", dir, false); err != nil {
 		t.Fatalf("abort with missing file should be a no-op, got %v", err)
 	}
 }
@@ -135,7 +147,7 @@ func TestApplyCodeAbortedDiscards(t *testing.T) {
 	// The extra "Cancel" button must throw the capture away entirely — no
 	// blog.md at all, unlike Save (keeps with caption) and Skip (keeps
 	// without).
-	if err := applyResult(ModeCode, Result{Submitted: false, Aborted: true}, "", "whoami\nroot\n", dir); err != nil {
+	if err := applyResult(ModeCode, Result{Submitted: false, Aborted: true}, "", "whoami\nroot\n", dir, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "blog.md")); !os.IsNotExist(err) {
@@ -169,7 +181,7 @@ func TestResultFromExit(t *testing.T) {
 }
 
 func TestApplyUnknownMode(t *testing.T) {
-	if err := applyResult("bogus", Result{}, "", "", t.TempDir()); err == nil {
+	if err := applyResult("bogus", Result{}, "", "", t.TempDir(), false); err == nil {
 		t.Fatal("unknown mode should error")
 	}
 }

@@ -86,6 +86,23 @@ func captureRecord(rec commandRecord, includeOutput bool) (string, error) {
 	}
 }
 
+// CaptureRows captures the text of a single tmux command given its marker
+// rows (pane, prev, start, end), exactly as CaptureN would from a record.
+// It is the building block for the shell hook's live per-command
+// transcript (commands.logs), which records each command's output at
+// completion time rather than waiting for an Alt+2 press.
+func CaptureRows(pane string, prev, start, end int, includeOutput bool) (string, error) {
+	return captureTmuxRange(commandRecord{kind: recordTmux, pane: pane, prev: prev, start: start, end: end}, includeOutput)
+}
+
+// KittyOutput returns the last command's output from a kitty window with
+// shell integration enabled — the same mechanism CaptureN uses for ktty
+// records — so the shell hook can append a command's output to its live
+// transcript at completion time.
+func KittyOutput(window, listen string) (string, error) {
+	return kittyLastCommandOutput(window, listen)
+}
+
 // captureTmuxRange runs tmux capture-pane over one record's row range.
 func captureTmuxRange(rec commandRecord, includeOutput bool) (string, error) {
 	if _, err := exec.LookPath("tmux"); err != nil {

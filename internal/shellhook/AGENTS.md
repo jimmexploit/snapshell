@@ -29,10 +29,12 @@ and end phases, so it keeps a per-pane marker file as scratch state:
 ## Command log (what Alt+2 actually reads)
 
 On every **completed** command, the hook appends a single line to the
-active session's command log `<session_root>/logs/<name>/commands.log`
+active session's marker-record log `<session_root>/logs/<name>/markers.logs`
 (the daemon points the hook at it via the
 `~/.local/state/snapshell/activesession` pointer file, written on `start`,
 removed on `stop`/shutdown). With no session active nothing is logged.
+(The file used to be named `commands.log`; the rename to `markers.logs`
+separates it from the two human-readable logs below.)
 
 Three record types, newest last:
 
@@ -140,10 +142,40 @@ The snippet passes `--source` (`$TMUX_PANE` in tmux, `$(tty)` outside) so
 each line says where the command ran. Newlines in the command text are
 collapsed to spaces so every record is exactly one line. This gives each
 session a complete command history from every shell, not just tmux — the
-daemon's `commands.log` row records remain the Alt+2 capture source, and
-`commands.history` is the human-readable full record. With no active
+daemon's `markers.logs` row records remain the Alt+2 capture source, and
+`commands.history` is the human-readable one-line history. With no active
 session, `_hook-record` only writes `lastcommand` and creates no history
 file.
+
+## Live transcript (`commands.logs`)
+
+On every completed command the hook also appends a readable record of the
+command **and its full output** to
+`<session_root>/logs/<name>/commands.logs` at completion time, so the
+session documents itself in real time rather than waiting for an Alt+2
+press. Best-effort by design — this runs in the prompt-critical path, so a
+capture failure (no tmux, kitty window gone) drops only that command's
+output, never breaks the shell.
+
+```
+=== 2026-08-18 12:00:00  %1 ===
+┌─[root@box]# nmap -sV 10.10.11.5
+22/tcp open  ssh
+80/tcp open  http
+```
+```
+=== 2026-08-18 12:05:00  /dev/pts/3 ===
+whoami
+root
+```
+
+The header line is the same timestamp+source shape as `commands.history`; the
+captured block below it is the literal pane text (tmux, via
+`tmuxcap.CaptureRows`), the command text plus its output read back from the
+kitty window (plain kitty, via `tmuxcap.KittyOutput`), or the command text
+alone (plain terminal). tmux capture happens in the `_hook-mark end` phase,
+which already has the row range; plain/kitty capture happens in
+`_hook-record`.
 
 ## Install instructions
 

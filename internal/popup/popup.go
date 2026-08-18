@@ -82,12 +82,14 @@ type Result struct {
 // count is the number of commands this capture spans (code mode only): for
 // count > 1 the window title reports it ("snapshell - command ×2"), so the
 // user can see the count prefix took effect. Other modes ignore it.
-func Capture(mode, sessionDir, file, text string, width, height int, font, position, theme string, count int) error {
+// captionAfter places the caption below the image/code block in blog.md
+// instead of above it (the default); note mode ignores it.
+func Capture(mode, sessionDir, file, text string, width, height int, font, position, theme string, count int, captionAfter bool) error {
 	res, err := askDialog(mode, sessionDir, file, text, width, height, font, position, theme, count)
 	if err != nil {
 		return err
 	}
-	return applyResult(mode, res, file, text, sessionDir)
+	return applyResult(mode, res, file, text, sessionDir, captionAfter)
 }
 
 // askDialog launches the zenity window and returns what the user did.
@@ -248,8 +250,9 @@ func dialogTitle(mode string, count int) string {
 
 // applyResult writes the finished entry to blog.md. Factored out of
 // Capture so tests can exercise the blog-append behaviour without a live
-// dialog.
-func applyResult(mode string, res Result, file, text, sessionDir string) error {
+// dialog. captionAfter places the entry's caption below the block in
+// blog.md (image/code modes); note mode ignores it.
+func applyResult(mode string, res Result, file, text, sessionDir string, captionAfter bool) error {
 	switch mode {
 	case ModeImage:
 		if res.Aborted {
@@ -261,12 +264,12 @@ func applyResult(mode string, res Result, file, text, sessionDir string) error {
 			}
 			return nil
 		}
-		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindImage, Caption: res.Text, ImagePath: file})
+		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindImage, Caption: res.Text, ImagePath: file, CaptionAfter: captionAfter})
 	case ModeCode, ModeSelection:
 		if res.Aborted {
 			return nil // the user pressed Cancel: discard the capture
 		}
-		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindCode, Caption: res.Text, CodeText: text})
+		return blog.Append(sessionDir, blog.Entry{Kind: blog.KindCode, Caption: res.Text, CodeText: text, CaptionAfter: captionAfter})
 	case ModeNote:
 		if !res.Submitted || strings.TrimSpace(res.Text) == "" {
 			return nil // cancelled or empty note = discard entirely

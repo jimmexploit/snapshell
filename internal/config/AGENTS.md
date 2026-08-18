@@ -48,6 +48,11 @@ name = ""                 # GTK theme for the popup via GTK_THEME
                           # ("Sweet", "Sweet:dark", ...); empty = system default
 root = ""                 # extra dir to scan for installed themes
                           # (list-themes); empty = standard locations only
+
+[blog]
+caption_position = "above"  # where the caption of an image/code entry sits
+                            # in blog.md: "above" (default) or "below";
+                            # note entries have no caption and ignore it
 ```
 
 ## Behavior

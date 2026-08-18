@@ -21,40 +21,40 @@ contract stays in one place.
 
 ## Entry format
 
-Every entry is preceded by a hidden timestamp comment (not rendered by
-Markdown viewers, present purely for traceability/debugging):
-```
-<!-- 2026-08-15T14:02:11+02:00 -->
-```
-Use RFC3339 with the local timezone offset, not UTC-normalized — the user
-will be scanning these by eye occasionally, local time is more useful.
+Entries are plain Markdown, one blank line separating them. There is no
+timestamp comment — entries are scanned by eye, and the trailing
+`<!-- timestamp -->` lines were removed as noise (the daemon log still
+records capture times). Do not reintroduce hidden comments; the per-command
+`commands.logs` transcript in the session log dir is where machine-readable
+capture timing lives.
 
 ### Image entry (from Alt+1)
 ```
-<!-- 2026-08-15T14:02:11+02:00 -->
 <caption text, if any>
 ![](attachments/003.png)
 ```
 If no caption was given, omit the caption line entirely — don't leave a
 blank line. Captions are **plain text, not bolded** — the `**...**` wrapper
-was dropped as a deliberate formatting choice.
+was dropped as a deliberate formatting choice. The caption sits **above**
+the image by default; `[blog].caption_position = "below"` (see
+`internal/config`) moves it below via `Entry.CaptionAfter`.
 
 ### Code entry (from Alt+2)
-````
-<!-- 2026-08-15T14:03:40+02:00 -->
+```
 <caption text, if any>
 ```bash
 <captured text verbatim>
 ```
-````
-Same rule: omit the caption line if empty. The language tag after the
-opening fence is **chosen by `DetectLang`** (see below), not hardcoded.
+```
+Same rule: omit the caption line if empty, and the caption is above by
+default / below when `Entry.CaptionAfter` is set. The language tag after
+the opening fence is **chosen by `DetectLang`** (see below), not hardcoded.
 
 ### Note entry (from Alt+3)
 ```
-<!-- 2026-08-15T14:05:02+02:00 -->
 <note text as a plain paragraph, no special formatting applied>
 ```
+Notes have no caption; `CaptionAfter` is ignored for them.
 
 ## Code block language detection
 
@@ -109,11 +109,12 @@ Keep detection pure and unit-testable (no I/O, no side effects).
 package blog
 
 type Entry struct {
-    Kind       EntryKind // Image | Code | Note
-    Caption    string    // may be empty
-    ImagePath  string    // relative path, Image entries only
-    CodeText   string    // Code entries only
-    NoteText   string    // Note entries only
+    Kind          EntryKind // Image | Code | Note
+    Caption       string    // may be empty
+    ImagePath     string    // relative path, Image entries only
+    CodeText      string    // Code entries only
+    NoteText      string    // Note entries only
+    CaptionAfter  bool      // caption below the block instead of above
 }
 
 func Append(sessionDir string, e Entry) error

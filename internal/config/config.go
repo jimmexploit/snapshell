@@ -25,6 +25,7 @@ type Config struct {
 	Keymaps    KeymapConfig     `toml:"keymaps"`
 	Paths      PathsConfig      `toml:"paths"`
 	Themes     ThemesConfig     `toml:"themes"`
+	Blog       BlogConfig       `toml:"blog"`
 	Inventory  InventoryConfig  `toml:"inventory"`
 }
 
@@ -124,6 +125,14 @@ type KeymapConfig struct {
 // unset or non-positive.
 const DefaultInventoryCloseDelay = 5
 
+// BlogConfig configures how blog.md entries are laid out.
+type BlogConfig struct {
+	// CaptionPosition places the caption of an image/code entry either
+	// above ("above", default) or below ("below") the image/code block.
+	// Note entries have no caption and ignore it.
+	CaptionPosition string `toml:"caption_position"`
+}
+
 // InventoryConfig configures the review TUI's screenshot preview
 // (inventory mode).
 type InventoryConfig struct {
@@ -153,6 +162,7 @@ func Default() *Config {
 		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 		Themes:     ThemesConfig{},
+		Blog:       BlogConfig{CaptionPosition: "above"},
 		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty"},
 	}
 }
@@ -183,6 +193,13 @@ func (c *Config) CountTimeout() time.Duration {
 		ms = DefaultCommandCountTimeout
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// CaptionAfter reports whether image/code captions are placed below the
+// block in blog.md instead of above it. Unknown or empty values resolve to
+// "above" (the default).
+func (c *Config) CaptionAfter() bool {
+	return strings.ToLower(strings.TrimSpace(c.Blog.CaptionPosition)) == "below"
 }
 
 // CloseDelay returns how long the review TUI leaves an opened image on
@@ -406,6 +423,12 @@ const defaultFileText = `# snapshell configuration
   # full-screen inside the terminal (requires running in kitty; falls back
   # to the external viewer otherwise), "external" opens it in image_viewer.
   image_mode = "kitty"
+
+[blog]
+  # Where the caption of an image/code entry sits in blog.md relative to
+  # the image/code block: "above" (default) or "below". Note entries have
+  # no caption and ignore this.
+  caption_position = "above"
 `
 
 // fillDefaults replaces empty/zero values with the built-in defaults.
@@ -458,6 +481,9 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Inventory.ImageMode) == "" {
 		c.Inventory.ImageMode = def.Inventory.ImageMode
+	}
+	if strings.TrimSpace(c.Blog.CaptionPosition) == "" {
+		c.Blog.CaptionPosition = def.Blog.CaptionPosition
 	}
 }
 

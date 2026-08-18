@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"snapshell/internal/capture/tmuxcap"
 	"snapshell/internal/daemon"
 )
 
@@ -83,6 +84,17 @@ func Mark(pane, phase, prevEnd string) (int, error) {
 		if err := appendCommandLog(pane, prev, start, abs); err != nil {
 			return 0, fmt.Errorf("mark end: record command log: %w", err)
 		}
+		// Live transcript: capture this completed command's full text+output
+		// (prompt, command, and all output, including scrolled) into the
+		// session's commands.logs right now, not just on an Alt+2 press.
+		// Best-effort — a capture failure drops only the transcript entry.
+		if start >= 0 && abs >= start {
+			if dir := activeSessionDir(); dir != "" {
+				if text, err := tmuxcap.CaptureRows(pane, prev, start, abs, true); err == nil {
+					appendCommandTranscript(dir, pane, text)
+				}
+			}
+		}
 		return abs, writeAtomic(path, fmt.Sprintf("%d\n%d\n%d\n", prev, start, abs))
 	default:
 		return 0, fmt.Errorf("mark: phase must be start or end, got %q", phase)
@@ -91,8 +103,8 @@ func Mark(pane, phase, prevEnd string) (int, error) {
 
 // appendCommandLog records a completed command so Alt+2 captures the most
 // recently completed command regardless of which pane it ran in. While a
-// session is active the record goes to that session's command log
-// (<session_root>/logs/<name>/commands.log, resolved via the daemon's
+// session is active the record goes to that session's marker-record log
+// (<session_root>/logs/<name>/markers.logs, resolved via the daemon's
 // active-session pointer) so each session keeps its own full command
 // history; with no active session it falls back to the global log.
 // Degenerate records (unstarted, or end still -1) are skipped so an
@@ -123,12 +135,34 @@ func activeSessionLog() string {
 }
 
 // activeSessionDir returns the log directory of the active session (the
-// directory holding its commands.log), or "" when no session is active.
+// directory holding its markers.logs), or "" when no session is active.
 func activeSessionDir() string {
 	if p := activeSessionLog(); p != "" {
 		return filepath.Dir(p)
 	}
 	return ""
+}
+
+// appendCommandTranscript appends one completed command's readable record to
+// the active session's commands.logs: a timestamp+source header line, then
+// the captured text (prompt + command + output for tmux, command text + read
+// output for kitty, command text alone for a plain terminal), then a blank
+// line between commands. Best-effort by design — it runs in the prompt path,
+// so a failure only drops that command's transcript entry, never breaks the
+// shell. dir is the session's logs directory; "" means no active session.
+func appendCommandTranscript(dir, source, capture string) {
+	if dir == "" || strings.TrimSpace(capture) == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	if source == "" {
+		source = "?"
+	}
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	entry := fmt.Sprintf("=== %s  %s ===\n%s\n\n", ts, source, strings.TrimRight(capture, "\n"))
+	_ = appendWrite(filepath.Join(dir, "commands.logs"), entry)
 }
 
 // RecordCommand records a completed command's text. It always overwrites
@@ -138,17 +172,22 @@ func activeSessionDir() string {
 // every command from every shell.
 //
 // When the command ran in a plain terminal (source doesn't look like a
-// tmux pane id), it is also appended to the session's command log so Alt+2
-// picks up the most recently completed command no matter which shell it was
-// typed in:
+// tmux pane id), it is also appended to the session's marker-record log so
+// Alt+2 picks up the most recently completed command no matter which shell
+// it was typed in:
 //
 //	tty <source> <command text...>                             (no kitty)
 //	ktty <source> <kitty-window> <kitty-listen> <command text...>  (in kitty)
 //
 // The kitty window id + listen socket let tmuxcap read the command's output
 // back from the window's scrollback via `kitty @ get-text`. tmux commands
-// don't write these records — their row record in commands.log is written
+// don't write these records — their row record in markers.logs is written
 // by the _hook-mark end phase and the output is captured from tmux.
+//
+// Plain/kitty commands also get a live commands.logs transcript entry (the
+// command text plus, for kitty, the output read back from the window);
+// tmux commands' transcript is captured by the _hook-mark end phase, which
+// already has the row range.
 //
 // Empty text (a skipped probe or an empty command) is ignored entirely.
 // The shell snippets filter out framework probes before calling this, so
@@ -180,9 +219,21 @@ func RecordCommand(source, kittyWindow, kittyListen, text string) error {
 		} else {
 			line += " " + source + " " + text
 		}
-		if err := appendWrite(filepath.Join(dir, "commands.log"), line+"\n"); err != nil {
+		if err := appendWrite(filepath.Join(dir, "markers.logs"), line+"\n"); err != nil {
 			return err
 		}
+		// Live transcript for plain/kitty commands: the command text, plus
+		// the output read back from the kitty window when shell integration
+		// marked it. Best-effort — a read failure keeps just the text.
+		capture := text
+		if kittyWindow != "" {
+			if out, err := tmuxcap.KittyOutput(kittyWindow, kittyListen); err == nil {
+				if out = strings.TrimRight(out, "\n"); out != "" {
+					capture += "\n" + out
+				}
+			}
+		}
+		appendCommandTranscript(dir, source, capture)
 	}
 	return appendWrite(filepath.Join(dir, "commands.history"), formatHistoryLine(source, text))
 }

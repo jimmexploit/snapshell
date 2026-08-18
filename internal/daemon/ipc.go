@@ -46,6 +46,7 @@ type StatusData struct {
 	Mode    string `json:"mode,omitempty"`
 	Entries int    `json:"entries,omitempty"`
 	Pending int    `json:"pending,omitempty"`
+	Dir     string `json:"dir,omitempty"`
 }
 
 // ListData is the structured payload behind the list verb. Dir is the

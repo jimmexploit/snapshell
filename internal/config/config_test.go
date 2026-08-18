@@ -219,6 +219,33 @@ func loadPopup(t *testing.T, body string) *Config {
 	return cfg
 }
 
+func TestCaptionPositionConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	write := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	if cfg := write("[blog]\ncaption_position = \"below\"\n"); !cfg.CaptionAfter() {
+		t.Fatal("caption_position = below should place captions after the block")
+	}
+	if cfg := write("[blog]\ncaption_position = \"BELOW  \"\n"); !cfg.CaptionAfter() {
+		t.Fatal("caption_position is case/space-insensitive: 'BELOW  ' should resolve below")
+	}
+	for _, body := range []string{"", "[blog]\n", "[blog]\ncaption_position = \"above\"\n", "[blog]\ncaption_position = \"sideways\"\n"} {
+		if got := write(body).CaptionAfter(); got {
+			t.Fatalf("CaptionAfter for %q should be false (above)", body)
+		}
+	}
+}
+
 func TestKeepRatioDefaultOn(t *testing.T) {
 	cfg := loadPopup(t, "width = 560\nheight = 320\n")
 	if !cfg.KeepRatioOn() {
@@ -280,7 +307,7 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\""} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\""} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}

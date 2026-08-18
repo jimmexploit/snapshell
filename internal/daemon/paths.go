@@ -38,9 +38,11 @@ func LastCommandPath() string { return filepath.Join(StateDir(), "lastcommand") 
 // completed command regardless of which pane it ran in.
 //
 // This is the fallback used when no session is active. While a session is
-// active the shell hook appends to that session's log instead
+// active the shell hook appends to that session's marker-record log instead
 // (SessionLogPath, tracked via ActiveSessionPath) so each session keeps its
-// own full command history under ~/.local/share/snapshell/logs/<name>/.
+// own full command history under ~/.local/share/snapshell/logs/<name>/
+// (markers.logs for the records, commands.logs for the readable
+// per-command transcript, commands.history for the one-line history).
 func CommandLogPath() string { return filepath.Join(StateDir(), "commandlog") }
 
 // ActiveSessionPath is a pointer file the daemon writes when a session

@@ -484,9 +484,9 @@ func (d *Daemon) handleStart(req Request) Response {
 		return fail(fmt.Sprintf("write session mode: %v", err))
 	}
 
-	// Point the shell hook at this session's command log so every command
-	// run while the session is active lands in
-	// <session_root>/logs/<name>/commands.log.
+	// Point the shell hook at this session's marker-record log so every
+	// command run while the session is active lands in
+	// <session_root>/logs/<name>/markers.logs.
 	logPath := d.sessionLogPath(name)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return fail(fmt.Sprintf("create session log dir: %v", err))
@@ -504,10 +504,11 @@ func (d *Daemon) handleStart(req Request) Response {
 		d.session.Queue = q
 	}
 	d.logger.Printf("session started: %s (dir=%s, log=%s, attachments=%d, mode=%s)", name, sessionDir, logPath, d.session.AttachNum, requested)
+	blogPath := filepath.Join(sessionDir, "blog.md")
 	if created {
-		return ok(fmt.Sprintf("started session %q (%s mode)", name, requested))
+		return ok(fmt.Sprintf("started session %q (%s mode); blog: %s", name, requested, blogPath))
 	}
-	return ok(fmt.Sprintf("resumed existing session %q (%s mode)", name, requested))
+	return ok(fmt.Sprintf("resumed existing session %q (%s mode); blog: %s", name, requested, blogPath))
 }
 
 func (d *Daemon) handleStop() Response {
@@ -553,8 +554,9 @@ func (d *Daemon) handleStatus() Response {
 	if mode == ModeInventory {
 		msg += fmt.Sprintf(", %d pending", pending)
 	}
+	msg += fmt.Sprintf("; blog: %s", filepath.Join(d.session.Dir, "blog.md"))
 	resp := ok(msg)
-	if data, err := json.Marshal(StatusData{Session: d.session.Name, Mode: string(mode), Entries: count, Pending: pending}); err == nil {
+	if data, err := json.Marshal(StatusData{Session: d.session.Name, Mode: string(mode), Entries: count, Pending: pending, Dir: d.session.Dir}); err == nil {
 		resp.Data = data
 	}
 	return resp
@@ -600,7 +602,7 @@ func (d *Daemon) handleCommit(req Request) Response {
 	if !haveQueue {
 		return errResp
 	}
-	if err := q.Commit(id, req.Args["caption"]); err != nil {
+	if err := q.Commit(id, req.Args["caption"], d.cfg.Load().CaptionAfter()); err != nil {
 		return fail(err.Error())
 	}
 	d.logger.Printf("inventory: committed card %d", id)
@@ -668,11 +670,13 @@ func (d *Daemon) activeQueueLocked() (*inventory.Queue, Response, bool) {
 	return d.session.Queue, Response{}, true
 }
 
-// sessionLogPath returns the append-only command log path for a session:
-// <session_root>/logs/<name>/commands.log. Every completed command run
-// while the session is active is recorded here (see ActiveSessionPath).
+// sessionLogPath returns the marker-record log path for a session:
+// <session_root>/logs/<name>/markers.logs. Every completed command run
+// while the session is active is recorded here as a row/tty/ktty record
+// (see ActiveSessionPath). The per-command human-readable transcript lives
+// next to it in commands.logs.
 func (d *Daemon) sessionLogPath(name string) string {
-	return filepath.Join(d.sessionRoot, "logs", name, "commands.log")
+	return filepath.Join(d.sessionRoot, "logs", name, "markers.logs")
 }
 
 // writePointer atomically writes a small pointer file (via temp + rename).
@@ -742,7 +746,10 @@ func writeMode(sessionDir string, m SessionMode) error {
 	return os.WriteFile(modeFilePath(sessionDir), []byte(string(m)+"\n"), 0o600)
 }
 
-// entryCount counts the entries appended to blog.md so far.
+// entryCount counts the entries appended to blog.md so far. Entries are
+// blank-line-separated top-level blocks: an image line (or its caption),
+// a code fence, or a note paragraph. Blank lines inside code fences must
+// not split an entry, so the scan tracks fence state.
 func entryCount(sessionDir string) (int, error) {
 	data, err := os.ReadFile(filepath.Join(sessionDir, "blog.md"))
 	if err != nil {
@@ -751,7 +758,62 @@ func entryCount(sessionDir string) (int, error) {
 		}
 		return 0, err
 	}
-	return strings.Count(string(data), "<!-- "), nil
+	return countEntries(string(data)), nil
+}
+
+// countEntries is the entry counter's pure core. The first non-blank line
+// is the "# <name>" header and is skipped; a blank line outside a code
+// fence ends the current entry; any line of ≥3 backticks opens a fence
+// (tracking its run length so only the matching closing fence exits), and
+// inside a fence nothing is treated as a boundary.
+func countEntries(s string) int {
+	count := 0
+	inEntry := false
+	fenceLen := 0
+	headerSkipped := false
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !headerSkipped {
+			if trimmed != "" {
+				headerSkipped = true
+				if run := backtickRun(trimmed); run >= 3 {
+					fenceLen = run
+				}
+			}
+			continue
+		}
+		if trimmed == "" {
+			if fenceLen == 0 {
+				inEntry = false
+			}
+			continue
+		}
+		run := backtickRun(trimmed)
+		if fenceLen > 0 {
+			if run >= fenceLen {
+				fenceLen = 0
+			}
+			continue
+		}
+		if !inEntry {
+			count++
+			inEntry = true
+		}
+		if run >= 3 {
+			fenceLen = run
+		}
+	}
+	return count
+}
+
+// backtickRun returns the length of the leading run of backtick characters
+// on a line.
+func backtickRun(line string) int {
+	n := 0
+	for n < len(line) && line[n] == '`' {
+		n++
+	}
+	return n
 }
 
 // countAttachments returns the number of files in the session's
@@ -892,7 +954,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	// ignored dialog never blocks the daemon or the next hotkey press.
 	// The dialog failing must not lose the screenshot that was just taken:
 	// it is still appended, just without a caption.
-	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, 1); err != nil {
+	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, 1, d.cfg.Load().CaptionAfter()); err != nil {
 		d.logger.Printf("capture screenshot: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath}); err != nil {
@@ -985,7 +1047,7 @@ func (d *Daemon) appendCodeEntry(s *Session, text, source, mode string, count in
 	// Same reasoning as the image flow: the captured command text is
 	// valuable on its own, so if the caption window can't spawn the entry
 	// is still appended without a caption.
-	if err := popup.Capture(mode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, count); err != nil {
+	if err := popup.Capture(mode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, count, d.cfg.Load().CaptionAfter()); err != nil {
 		d.logger.Printf("capture %s: popup: %v", source, err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
@@ -1009,7 +1071,7 @@ func readLastCommand() (string, error) {
 // and appends it to blog.md itself. There is no fallback entry — the note
 // text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
-	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, 1); err != nil {
+	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, 1, false); err != nil {
 		d.logger.Printf("capture note: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return

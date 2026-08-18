@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // EntryKind identifies which blog entry type to render.
@@ -25,6 +24,9 @@ type Entry struct {
 	ImagePath string // relative path, Image entries only
 	CodeText  string // Code entries only
 	NoteText  string // Note entries only
+	// CaptionAfter places the caption below the image/code block instead of
+	// above it (the default). Notes have no caption and ignore it.
+	CaptionAfter bool
 }
 
 // Append writes one formatted entry to <sessionDir>/blog.md. It is the only
@@ -42,15 +44,13 @@ func Append(sessionDir string, e Entry) error {
 	}
 	defer f.Close()
 
-	// Local RFC3339 timestamp so the user can scan entries by local time.
-	ts := time.Now().Format(time.RFC3339)
 	body, err := render(e)
 	if err != nil {
 		return err
 	}
 
 	// Exactly one blank line separates entries.
-	if _, err := fmt.Fprintf(f, "\n<!-- %s -->\n%s\n", ts, body); err != nil {
+	if _, err := fmt.Fprintf(f, "\n%s\n", body); err != nil {
 		return fmt.Errorf("append to blog.md: %w", err)
 	}
 	return nil
@@ -75,9 +75,9 @@ func render(e Entry) (string, error) {
 		if e.ImagePath == "" {
 			return "", fmt.Errorf("image entry without ImagePath")
 		}
-		return captionLine(e.Caption) + "![](" + e.ImagePath + ")", nil
+		return renderBlock(e, "![]("+e.ImagePath+")"), nil
 	case KindCode:
-		return captionLine(e.Caption) + codeFence(e.CodeText), nil
+		return renderBlock(e, codeFence(e.CodeText)), nil
 	case KindNote:
 		if e.NoteText == "" {
 			return "", fmt.Errorf("note entry without NoteText")
@@ -88,13 +88,18 @@ func render(e Entry) (string, error) {
 	}
 }
 
-// captionLine renders the caption as a plain paragraph line, or nothing
-// when empty — never a blank line. Captions are intentionally not bolded.
-func captionLine(caption string) string {
-	if strings.TrimSpace(caption) == "" {
-		return ""
+// renderBlock places the entry's optional caption above or below the image
+// line / code fence per Entry.CaptionAfter, each on its own line. An empty
+// caption renders just the block.
+func renderBlock(e Entry, block string) string {
+	caption := strings.TrimRight(strings.TrimSpace(e.Caption), "\n")
+	if caption == "" {
+		return block
 	}
-	return caption + "\n"
+	if e.CaptionAfter {
+		return block + "\n" + caption
+	}
+	return caption + "\n" + block
 }
 
 // codeFence wraps code in a language-tagged fence chosen by DetectLang. If
