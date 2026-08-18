@@ -16,62 +16,83 @@ var ErrNotInTmux = errors.New("not in a tmux session")
 
 // Result describes a completed tmux capture.
 type Result struct {
-	// Text is the literal pane text spanning the last completed command:
-	// the full prompt (all its lines), the command, and — when output is
+	// Text is the literal pane text spanning the captured command(s): the
+	// full prompt (all its lines), the command, and — when output is
 	// included — its full output (including output that scrolled past the
-	// visible screen).
+	// visible screen). For a multi-command capture the individual commands
+	// are separated by a blank line.
 	Text string
+	// Count is how many completed commands the capture actually covered.
+	// It can be less than the number requested when the command log holds
+	// fewer records (the popup shows the real count, not the request).
+	Count int
 }
 
 // Capture returns the exact text of the most recently completed command
-// (and, when includeOutput is true, its output), from wherever it ran —
-// a tmux pane or a plain terminal.
-//
-// commandLog is the append-only log the shell hook writes on every
-// completed command, one line per command (newest last):
-//
-//	%<pane_id> <prev_end> <start> <end>        tmux: row-based, captured via tmux
-//	tty <source> <command text...>             plain terminal: text only, no output
-//	ktty <source> <kittywid> <listen> <text...> kitty plain terminal: output via kitty
-//
-// For a tmux record the rows are absolute (history_size + cursor_y):
-// prev_end is where the current prompt started (or -1 when unknown), start
-// is the first output row, and end is the next prompt row. Empirically the
-// start row is one below the last prompt line, because the terminal echoes
-// the accepted newline before preexec/DEBUG fires, and the end row is one
-// past the last output line. So with a known prev_end the capture begins at
-// the top of the (possibly multi-line) prompt, and with includeOutput the
-// capture runs to the last output line. When prev_end is unknown (first
-// command in the pane) it falls back to start-1 — the last prompt line,
-// which is where the command was typed on a single-line prompt.
-//
-// For a plain-terminal record there is no tmux scrollback to capture from.
-// A tty record returns just the command text. A ktty record additionally
-// holds the kitty window id + listen socket the command ran in; when the
-// window's shell had kitty shell integration enabled (prompt marks), its
-// output is read back with `kitty @ get-text --extent last_cmd_output` and
-// returned alongside the command text. Without the marks (shell started
-// before the hook was installed) that extent is empty and the text alone is
-// returned.
-//
-// Alt+2 reads the last log line, so it captures the most recently completed
-// command regardless of which shell or pane it ran in — no focus resolution
-// and no per-pane marker scanning, which are unreliable when the
-// daemon/opencode runs in a different pane than the command shell.
+// (and, when includeOutput is true, its output), from wherever it ran — a
+// tmux pane or a plain terminal. It is CaptureN with a count of one.
 func Capture(commandLog string, includeOutput bool) (Result, error) {
-	rec, err := lastCommandRecord(commandLog)
+	return CaptureN(commandLog, includeOutput, 1)
+}
+
+// CaptureN is Capture but for the last n completed commands at once,
+// concatenated with a blank line between them. n < 1 is treated as 1. It
+// backs the Alt+2 command-count prefix: Alt+2 followed by a digit captures
+// that many commands together. Fewer records than requested is fine — as
+// many as exist are captured and reported in Result.Count.
+func CaptureN(commandLog string, includeOutput bool, n int) (Result, error) {
+	if n < 1 {
+		n = 1
+	}
+	recs, err := lastCommandRecords(commandLog, n)
 	if err != nil {
 		return Result{}, err
 	}
-	if rec.kind == recordPlain || rec.kind == recordKitty {
-		return capturePlain(rec, includeOutput)
+
+	// n == 1 keeps the historical single-record behavior: the text is
+	// returned verbatim, exactly as a single tmux capture-pane produced it.
+	if len(recs) == 1 {
+		text, err := captureRecord(recs[0], includeOutput)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Text: text, Count: 1}, nil
 	}
 
+	var parts []string
+	for _, rec := range recs {
+		text, err := captureRecord(rec, includeOutput)
+		if err != nil {
+			return Result{}, err
+		}
+		if strings.TrimSpace(text) != "" {
+			parts = append(parts, strings.TrimRight(text, "\n"))
+		}
+	}
+	return Result{Text: strings.Join(parts, "\n\n") + "\n", Count: len(recs)}, nil
+}
+
+// captureRecord captures a single command record, whatever its kind.
+func captureRecord(rec commandRecord, includeOutput bool) (string, error) {
+	switch rec.kind {
+	case recordPlain:
+		return rec.text, nil
+	case recordKitty:
+		return capturePlain(rec, includeOutput)
+	case recordTmux:
+		return captureTmuxRange(rec, includeOutput)
+	default:
+		return "", fmt.Errorf("unknown command log record kind")
+	}
+}
+
+// captureTmuxRange runs tmux capture-pane over one record's row range.
+func captureTmuxRange(rec commandRecord, includeOutput bool) (string, error) {
 	if _, err := exec.LookPath("tmux"); err != nil {
-		return Result{}, fmt.Errorf("%w: tmux not found on PATH", ErrNotInTmux)
+		return "", fmt.Errorf("%w: tmux not found on PATH", ErrNotInTmux)
 	}
 	if rec.start < 0 || rec.end == -1 || rec.end < rec.start {
-		return Result{}, fmt.Errorf("command log record for pane %s is degenerate (%d..%d) — rerun a command and try again", rec.pane, rec.start, rec.end)
+		return "", fmt.Errorf("command log record for pane %s is degenerate (%d..%d) — rerun a command and try again", rec.pane, rec.start, rec.end)
 	}
 
 	from := rec.start - 1
@@ -85,35 +106,31 @@ func Capture(commandLog string, includeOutput bool) (Result, error) {
 
 	hs, err := historySize(rec.pane)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 
-	text, err := captureRange(rec.pane, from-hs, to-hs)
-	if err != nil {
-		return Result{}, err
-	}
-	return Result{Text: text}, nil
+	return captureRange(rec.pane, from-hs, to-hs)
 }
 
 // capturePlain returns the recorded command text, reading the command's
 // output back from kitty when the record carries kitty window metadata and
 // the output is wanted.
-func capturePlain(rec commandRecord, includeOutput bool) (Result, error) {
+func capturePlain(rec commandRecord, includeOutput bool) (string, error) {
 	// Without kitty window metadata (a tty record, or a ktty record whose
 	// shell wasn't inside kitty) the text alone is all we have.
 	if rec.kind == recordPlain || rec.kittyWindow == "" {
-		return Result{Text: rec.text}, nil
+		return rec.text, nil
 	}
 	if !includeOutput {
-		return Result{Text: rec.text}, nil
+		return rec.text, nil
 	}
 
 	if _, err := exec.LookPath("kitty"); err != nil {
-		return Result{}, fmt.Errorf("could not capture output from kitty: kitty not found on PATH")
+		return "", fmt.Errorf("could not capture output from kitty: kitty not found on PATH")
 	}
 	out, err := kittyLastCommandOutput(rec.kittyWindow, rec.kittyListen)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 	text := rec.text
 	if out := strings.TrimRight(out, "\n"); out != "" {
@@ -121,7 +138,7 @@ func capturePlain(rec commandRecord, includeOutput bool) (Result, error) {
 		// matching the tmux capture.
 		text += "\n" + out + "\n"
 	}
-	return Result{Text: text}, nil
+	return text, nil
 }
 
 // kittyLastCommandOutput runs `kitty @ get-text --extent last_cmd_output`
@@ -163,65 +180,89 @@ type commandRecord struct {
 	kittyListen      string // kitty listen socket for ktty records
 }
 
-// lastCommandRecord returns the most recently completed command from the
-// append-only command log. Invalid/torn lines are skipped in favor of the
-// previous valid record. A missing or empty log means no command has
-// completed since the hook was installed (or it isn't sourced) — that gets
-// a specific, actionable message.
-func lastCommandRecord(path string) (commandRecord, error) {
+// lastCommandRecords returns the most recently completed commands from the
+// append-only command log — up to n, oldest first — so a multi-command
+// capture can span them. commandLog is the file the shell hook appends to
+// on every completed command, one line per command (newest last):
+//
+//	%<pane_id> <prev_end> <start> <end>        tmux: row-based, captured via tmux
+//	tty <source> <command text...>             plain terminal: text only, no output
+//	ktty <source> <kittywid> <listen> <text...> kitty plain terminal: output via kitty
+//
+// Invalid/torn lines are skipped in favor of the previous valid record; a
+// requested n may come back with fewer records when the log is short. A
+// missing or empty log means no command has completed since the hook was
+// installed (or it isn't sourced) — that gets a specific, actionable
+// message.
+func lastCommandRecords(path string, n int) ([]commandRecord, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return commandRecord{}, fmt.Errorf("no command captured yet — check that the snapshell shell hook is sourced in your shell rc file")
+			return nil, fmt.Errorf("no command captured yet — check that the snapshell shell hook is sourced in your shell rc file")
 		}
-		return commandRecord{}, fmt.Errorf("read command log: %v", err)
+		return nil, fmt.Errorf("read command log: %v", err)
 	}
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		fields := strings.Fields(lines[i])
-		if len(fields) == 0 {
-			continue
-		}
-		if strings.HasPrefix(fields[0], "%") {
-			// tmux record: exactly four whitespace-separated fields, three
-			// of them integers.
-			if len(fields) != 4 {
-				continue
-			}
-			vals := make([]int, 3)
-			ok := true
-			for j, f := range fields[1:] {
-				n, e := strconv.Atoi(f)
-				if e != nil {
-					ok = false
-					break
-				}
-				vals[j] = n
-			}
-			if !ok {
-				continue
-			}
-			return commandRecord{kind: recordTmux, pane: fields[0], prev: vals[0], start: vals[1], end: vals[2]}, nil
-		}
-		if fields[0] == "tty" {
-			// Plain-terminal record: "tty <source> <command text...>".
-			if len(fields) < 3 {
-				continue
-			}
-			return commandRecord{kind: recordPlain, source: fields[1], text: strings.Join(fields[2:], " ")}, nil
-		}
-		if fields[0] == "ktty" {
-			// Kitty plain-terminal record:
-			// "ktty <source> <kittywid> <listen> <command text...>".
-			if len(fields) < 5 {
-				continue
-			}
-			return commandRecord{kind: recordKitty, source: fields[1],
-				kittyWindow: fields[2], kittyListen: fields[3],
-				text: strings.Join(fields[4:], " ")}, nil
+	var newest []commandRecord
+	for i := len(lines) - 1; i >= 0 && len(newest) < n; i-- {
+		if rec, ok := parseRecord(lines[i]); ok {
+			newest = append(newest, rec)
 		}
 	}
-	return commandRecord{}, fmt.Errorf("no command captured yet — check that the snapshell shell hook is sourced in your shell rc file")
+	if len(newest) == 0 {
+		return nil, fmt.Errorf("no command captured yet — check that the snapshell shell hook is sourced in your shell rc file")
+	}
+	// Reverse into chronological (oldest-first) order: the capture reads
+	// left-to-right like the terminal, so command text appears in the order
+	// it was actually run.
+	recs := make([]commandRecord, len(newest))
+	for i, rec := range newest {
+		recs[len(newest)-1-i] = rec
+	}
+	return recs, nil
+}
+
+// parseRecord parses one command-log line. ok is false for blank or
+// malformed lines (torn writes), which the caller skips.
+func parseRecord(line string) (rec commandRecord, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return commandRecord{}, false
+	}
+	if strings.HasPrefix(fields[0], "%") {
+		// tmux record: exactly four whitespace-separated fields, three of
+		// them integers.
+		if len(fields) != 4 {
+			return commandRecord{}, false
+		}
+		vals := make([]int, 3)
+		for j, f := range fields[1:] {
+			n, e := strconv.Atoi(f)
+			if e != nil {
+				return commandRecord{}, false
+			}
+			vals[j] = n
+		}
+		return commandRecord{kind: recordTmux, pane: fields[0], prev: vals[0], start: vals[1], end: vals[2]}, true
+	}
+	if fields[0] == "tty" {
+		// Plain-terminal record: "tty <source> <command text...>".
+		if len(fields) < 3 {
+			return commandRecord{}, false
+		}
+		return commandRecord{kind: recordPlain, source: fields[1], text: strings.Join(fields[2:], " ")}, true
+	}
+	if fields[0] == "ktty" {
+		// Kitty plain-terminal record:
+		// "ktty <source> <kittywid> <listen> <command text...>".
+		if len(fields) < 5 {
+			return commandRecord{}, false
+		}
+		return commandRecord{kind: recordKitty, source: fields[1],
+			kittyWindow: fields[2], kittyListen: fields[3],
+			text: strings.Join(fields[4:], " ")}, true
+	}
+	return commandRecord{}, false
 }
 
 // historySize returns the pane's current scrollback line count, needed to

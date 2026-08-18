@@ -29,6 +29,9 @@ position = ""             # where the dialog spawns: a preset ("center",
 [capture]
 include_output = true     # false = Alt+2 captures only the command line
 reload_on_hotkey = false  # true = re-read config before every hotkey capture
+count_timeout_ms = 1500   # ms after Alt+2 to wait for a count digit (1-9);
+                          # 0 = 1500. Digit sets how many recent commands
+                          # to capture at once; none pressed = last one.
 
 [keymaps]
 screenshot = "Alt+1"      # global hotkeys; Alt=Mod1, Ctrl=Control,

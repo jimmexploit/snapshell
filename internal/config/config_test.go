@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadCreatesDefaultFile(t *testing.T) {
@@ -342,7 +343,30 @@ func TestReloadConfigKeys(t *testing.T) {
 	if cfg.ReloadOnHotkeyOn() {
 		t.Fatal("reload_on_hotkey should default to false")
 	}
+	if cfg.CountTimeout() != 1500*time.Millisecond {
+		t.Fatalf("CountTimeout() = %v, want the default 1500ms", cfg.CountTimeout())
+	}
+	if cfg.Capture.CountTimeoutMs != DefaultCommandCountTimeout {
+		t.Fatalf("CountTimeoutMs = %d, want default %d", cfg.Capture.CountTimeoutMs, DefaultCommandCountTimeout)
+	}
 
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[capture]\ncount_timeout_ms = 400\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.CountTimeout() != 400*time.Millisecond {
+		t.Fatalf("CountTimeout() = %v, want 400ms from config", cfg.CountTimeout())
+	}
+	if cfg.ReloadOnHotkeyOn() {
+		t.Fatal("reload_on_hotkey should still default to false")
+	}
+}
+
+func TestReloadOnHotkeyTrueHonored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("[capture]\nreload_on_hotkey = true\n"), 0o600); err != nil {
 		t.Fatal(err)

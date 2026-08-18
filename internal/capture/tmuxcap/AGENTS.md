@@ -48,6 +48,20 @@ kitty. This is deterministic: the last-written record is always the most
 recently completed command, wherever it was typed — no focus resolution, no
 mtime scanning.
 
+## Command count (Alt+2 + digit)
+
+Pressing a digit (1-9) right after Alt+2 captures that many recent commands
+at once, concatenated with a blank line between them. `CaptureN(commandLog,
+includeOutput, n)` reads the **last n valid records** (in chronological
+order) and captures each one independently — consecutive same-pane tmux
+records are adjacent in the log (record A's `to` == the next record's
+`from`-1), so per-record capture equals a single widened `capture-pane`
+range; there is no gap or duplication to merge. `Result.Count` reports how
+many records were actually captured, which can be fewer than `n` when the
+log is short — the popup shows that real number, not the request. `n<1`
+clamps to 1, and `Capture` is exactly `CaptureN(..., 1)` (same verbatim
+text as always).
+
 ## Flow
 
 1. Read the last line of the active session's command log

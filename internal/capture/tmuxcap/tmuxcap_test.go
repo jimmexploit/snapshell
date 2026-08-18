@@ -519,3 +519,141 @@ func TestCaptureMissingTmux(t *testing.T) {
 		t.Fatalf("error should name tmux, got: %v", err)
 	}
 }
+
+func TestCaptureNTwoConsecutiveCommands(t *testing.T) {
+	// Two consecutive commands in the same pane. Record A ran rows
+	// [prev=4 .. end-1=8], record B picked up where A left off
+	// (prev=9=A.end, so [9 .. 14]). CaptureN(2) concatenates both with a
+	// blank line — a widened single capture-pane range would produce the
+	// same rows, since A's to == B's from-1.
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "%0 4 5 9", "%0 9 10 15")
+
+	res, err := CaptureN(logFile, true, 2)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	want := "row 4\nrow 5\nrow 6\nrow 7\nrow 8\n\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q", res.Text, want)
+	}
+	if res.Count != 2 {
+		t.Fatalf("Count = %d, want 2", res.Count)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-t %0") {
+		t.Fatalf("capture-pane args = %q, want -t %%0", args)
+	}
+}
+
+func TestCaptureNTwoCommandsDifferentPanes(t *testing.T) {
+	// Two commands, each in its own pane: older %1 first, newer %0 last.
+	// CaptureN(2) captures both, oldest first.
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%1 7 9 14", "%0 20 21 30")
+
+	res, err := CaptureN(logFile, true, 2)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	want := "row 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\n\n" +
+		"row 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q", res.Text, want)
+	}
+	if res.Count != 2 {
+		t.Fatalf("Count = %d, want 2", res.Count)
+	}
+}
+
+func TestCaptureNFewerRecordsThanRequested(t *testing.T) {
+	// Requested 3, but only two commands exist in the log: both are
+	// captured and Count reports the real number.
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 4 5 9", "%0 9 10 15")
+
+	res, err := CaptureN(logFile, true, 3)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	want := "row 4\nrow 5\nrow 6\nrow 7\nrow 8\n\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q", res.Text, want)
+	}
+	if res.Count != 2 {
+		t.Fatalf("Count = %d, want 2 (only two records exist)", res.Count)
+	}
+}
+
+func TestCaptureNSingleKeepsHistoricalBehavior(t *testing.T) {
+	// CaptureN(..., 1) — the default Alt+2 — must produce exactly what
+	// Capture always produced (verbatim, no blank-line join).
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 4 5 9", "%0 9 10 15")
+
+	res, err := CaptureN(logFile, true, 1)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	want := "row 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q (last command verbatim)", res.Text, want)
+	}
+	if res.Count != 1 {
+		t.Fatalf("Count = %d, want 1", res.Count)
+	}
+}
+
+func TestCaptureNNegativeCountDefaultsToOne(t *testing.T) {
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 9 10 15")
+	res, err := CaptureN(logFile, true, 0)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	if res.Count != 1 || res.Text != "row 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\n" {
+		t.Fatalf("Count=%d Text=%q, want a single-command capture", res.Count, res.Text)
+	}
+}
+
+func TestCaptureNMixedPlainAndTmux(t *testing.T) {
+	// A plain-terminal command, then a tmux command: CaptureN(2) spans both,
+	// returning the plain text followed by the tmux capture.
+	logFile, argsFile := setUp(t, "0")
+	writeLog(t, logFile, "tty /dev/pts/5 whoami", "%1 7 9 14")
+
+	res, err := CaptureN(logFile, true, 2)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	want := "whoami\n\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q", res.Text, want)
+	}
+	if res.Count != 2 {
+		t.Fatalf("Count = %d, want 2", res.Count)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "-t %1") {
+		t.Fatalf("capture-pane args = %q, want -t %%1", args)
+	}
+}
+
+func TestCaptureNCommandOnlyStopsAtEachCommandLine(t *testing.T) {
+	// includeOutput=false applies per record: each captures its prompt lines
+	// + command only, no output rows.
+	logFile, _ := setUp(t, "0")
+	writeLog(t, logFile, "%0 4 5 9", "%0 9 10 15")
+
+	res, err := CaptureN(logFile, false, 2)
+	if err != nil {
+		t.Fatalf("CaptureN: %v", err)
+	}
+	want := "row 4\n\nrow 9\n"
+	if res.Text != want {
+		t.Fatalf("Text = %q, want %q", res.Text, want)
+	}
+	if res.Count != 2 {
+		t.Fatalf("Count = %d, want 2", res.Count)
+	}
+}

@@ -175,7 +175,7 @@ func TestApplyUnknownMode(t *testing.T) {
 }
 
 func TestZenityArgsImage(t *testing.T) {
-	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300, "Sans 14")
+	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300, "Sans 14", 1)
 	joined := strings.Join(args, " ")
 	// The caption input is a text area (--text-info --editable) that fills
 	// the window, so the user can see everything they type.
@@ -188,7 +188,7 @@ func TestZenityArgsImage(t *testing.T) {
 }
 
 func TestZenityArgsNoFontWhenEmpty(t *testing.T) {
-	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300, "")
+	args := zenityArgs(ModeImage, "/sessions/box", "attachments/001.png", "", 520, 300, "", 1)
 	if strings.Contains(strings.Join(args, " "), "--font") {
 		t.Fatalf("empty font must not emit --font: %v", args)
 	}
@@ -196,7 +196,7 @@ func TestZenityArgsNoFontWhenEmpty(t *testing.T) {
 
 func TestZenityArgsCodeTruncatesPreview(t *testing.T) {
 	long := strings.Repeat("x", 500)
-	args := zenityArgs(ModeCode, "", "", long, 0, 0, "")
+	args := zenityArgs(ModeCode, "", "", long, 0, 0, "", 1)
 	found := false
 	for _, a := range args {
 		if strings.HasPrefix(a, "--text=") {
@@ -215,7 +215,7 @@ func TestZenityArgsCodeTruncatesPreview(t *testing.T) {
 }
 
 func TestZenityArgsNote(t *testing.T) {
-	args := zenityArgs(ModeNote, "", "", "", 560, 400, "Sans 13")
+	args := zenityArgs(ModeNote, "", "", "", 560, 400, "Sans 13", 1)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--text-info", "--editable", "--font", "Sans 13",
 		"--ok-label=Save", "--cancel-label=Discard"} {
@@ -250,5 +250,43 @@ func TestResolveZenityMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // empty
 	if _, err := resolveZenity(); err == nil {
 		t.Fatal("missing zenity should error")
+	}
+}
+
+func TestDialogTitleCountSuffix(t *testing.T) {
+	// The Alt+2 command-count suffix appears only for code mode with a
+	// count above 1; everything else keeps the plain title.
+	cases := []struct {
+		mode  string
+		count int
+		want  string
+	}{
+		{ModeCode, 1, "snapshell - command"},
+		{ModeCode, 2, "snapshell - command ×2"},
+		{ModeCode, 9, "snapshell - command ×9"},
+		{ModeCode, 0, "snapshell - command"}, // 0/negative = default, no suffix
+		{ModeImage, 3, "snapshell - screenshot"},
+		{ModeNote, 3, "snapshell - note"},
+		{ModeSelection, 3, "snapshell - selected text"},
+		{"bogus", 2, "snapshell"},
+	}
+	for _, tc := range cases {
+		if got := dialogTitle(tc.mode, tc.count); got != tc.want {
+			t.Errorf("dialogTitle(%q, %d) = %q, want %q", tc.mode, tc.count, got, tc.want)
+		}
+	}
+}
+
+func TestZenityArgsCodeCountTitle(t *testing.T) {
+	// The count must reach the actual zenity --title (single source of
+	// truth shared with the position mover).
+	args := zenityArgs(ModeCode, "", "", "whoami\nroot\n", 0, 0, "", 3)
+	if !slices.Contains(args, "--title=snapshell - command ×3") {
+		t.Fatalf("code args missing the ×3 title: %v", args)
+	}
+	// And a plain Alt+2 (count 1) stays the plain title.
+	args = zenityArgs(ModeCode, "", "", "whoami\nroot\n", 0, 0, "", 1)
+	if !slices.Contains(args, "--title=snapshell - command") {
+		t.Fatalf("code args missing the plain title: %v", args)
 	}
 }

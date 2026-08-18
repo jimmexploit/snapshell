@@ -616,7 +616,7 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	// ignored dialog never blocks the daemon or the next hotkey press.
 	// The dialog failing must not lose the screenshot that was just taken:
 	// it is still appended, just without a caption.
-	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name); err != nil {
+	if err := popup.Capture(popup.ModeImage, s.Dir, res.RelPath, "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, 1); err != nil {
 		d.logger.Printf("capture screenshot: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindImage, ImagePath: res.RelPath}); err != nil {
@@ -628,9 +628,11 @@ func (d *Daemon) captureScreenshot(s *Session) {
 
 // captureCode runs the Alt+2 flow: the most recently completed command's
 // text (from the command log when in tmux, otherwise the shell hook's
-// recorded command) → popup caption → entry appended to blog.md.
+// recorded command) → popup caption → entry appended to blog.md. A digit
+// pressed right after Alt+2 (1-9) captures that many commands together.
 func (d *Daemon) captureCode(s *Session) {
-	res, err := tmuxcap.Capture(d.sessionLogPath(s.Name), d.cfg.Load().OutputIncluded())
+	count := d.commandCount()
+	res, err := tmuxcap.CaptureN(d.sessionLogPath(s.Name), d.cfg.Load().OutputIncluded(), count)
 	if err != nil {
 		if !errors.Is(err, tmuxcap.ErrNotInTmux) {
 			// In tmux but nothing captured (empty command log, bad record):
@@ -651,15 +653,38 @@ func (d *Daemon) captureCode(s *Session) {
 		}
 		d.logger.Printf("capture tmux: %v — falling back to recorded last command", err)
 		_ = notify.Send("snapshell", "not in tmux — capturing last command only (no output)")
-		d.appendCodeEntry(s, text, "lastcommand", popup.ModeCode)
+		d.appendCodeEntry(s, text, "lastcommand", popup.ModeCode, 1)
 		return
 	}
-	d.appendCodeEntry(s, res.Text, "tmux", popup.ModeCode)
+	d.appendCodeEntry(s, res.Text, "tmux", popup.ModeCode, res.Count)
+}
+
+// commandCount blocks briefly after Alt+2 waiting for a digit (1-9) that
+// sets how many recent commands to capture at once. It returns 1 — the
+// default — when no digit is pressed in time, when hotkeys are disabled
+// (tests), or when the digit listener can't start. Only called from within
+// a capture goroutine, so the wait never blocks the hotkey event loop.
+func (d *Daemon) commandCount() int {
+	if d.hotkeysDisabled {
+		return 1
+	}
+	digit, err := hotkeys.WaitForDigit(d.cfg.Load().CountTimeout())
+	if err != nil {
+		d.logger.Printf("command count: %v", err)
+		return 1
+	}
+	if digit > 0 {
+		d.logger.Printf("command count: capturing last %d commands", digit)
+		return digit
+	}
+	return 1
 }
 
 // appendCodeEntry is the shared tail of the code/selection capture paths:
 // show the caption window for the captured text, then append it to blog.md.
-func (d *Daemon) appendCodeEntry(s *Session, text, source, mode string) {
+// count is how many commands the capture spans (code mode only); the popup
+// reflects it in its title when it's more than one.
+func (d *Daemon) appendCodeEntry(s *Session, text, source, mode string, count int) {
 	if strings.TrimSpace(text) == "" {
 		d.logger.Printf("capture %s: empty capture, no entry added", source)
 		return
@@ -668,7 +693,7 @@ func (d *Daemon) appendCodeEntry(s *Session, text, source, mode string) {
 	// Same reasoning as the image flow: the captured command text is
 	// valuable on its own, so if the caption window can't spawn the entry
 	// is still appended without a caption.
-	if err := popup.Capture(mode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name); err != nil {
+	if err := popup.Capture(mode, s.Dir, "", text, d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, count); err != nil {
 		d.logger.Printf("capture %s: popup: %v", source, err)
 		_ = notify.Send("snapshell", err.Error())
 		if err := blog.Append(s.Dir, blog.Entry{Kind: blog.KindCode, CodeText: text}); err != nil {
@@ -692,7 +717,7 @@ func readLastCommand() (string, error) {
 // and appends it to blog.md itself. There is no fallback entry — the note
 // text only exists inside the form.
 func (d *Daemon) captureNote(s *Session) {
-	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name); err != nil {
+	if err := popup.Capture(popup.ModeNote, s.Dir, "", "", d.cfg.Load().Popup.Width, d.cfg.Load().Popup.Height, d.cfg.Load().Popup.Font, d.cfg.Load().Popup.Position, d.cfg.Load().Themes.Name, 1); err != nil {
 		d.logger.Printf("capture note: popup: %v", err)
 		_ = notify.Send("snapshell", err.Error())
 		return
@@ -715,7 +740,7 @@ func (d *Daemon) captureSelection(s *Session) {
 		_ = notify.Send("snapshell", err.Error())
 		return
 	}
-	d.appendCodeEntry(s, text, "selection", popup.ModeSelection)
+	d.appendCodeEntry(s, text, "selection", popup.ModeSelection, 1)
 }
 
 func (d *Daemon) handleSignals() {

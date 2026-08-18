@@ -100,6 +100,19 @@ file and socket file may be left behind. On next `daemon start`:
   capture flow in its own goroutine; only the shared state mutations need
   to be serialized, not the whole flow.
 
+## Command count (Alt+2 + digit)
+
+Alt+2 followed by a digit (1-9) captures that many recent commands at once
+(after `[capture].count_timeout_ms`, default 1500ms). `captureCode` calls
+`commandCount()` from within its capture goroutine first — the wait happens
+there, never on the hotkey event loop — which uses
+`hotkeys.WaitForDigit` (skipped entirely when hotkeys are disabled, i.e.
+in tests). No digit pressed = count 1 = the historical single-command
+capture; a digit pressed = `tmuxcap.CaptureN(log, output, count)`, and the
+real number of records actually captured (`res.Count` — may be fewer than
+requested when the log is short) is passed to `appendCodeEntry`, so the
+popup title reports what was actually captured, not what was asked for.
+
 ## systemd unit (in `systemd/`)
 
 Provide `systemd/snapshell.service` as a **user** unit (`~/.config/systemd/

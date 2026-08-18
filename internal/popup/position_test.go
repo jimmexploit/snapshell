@@ -173,7 +173,7 @@ func TestAskDialogPositionWithoutXdotoolErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)
-	_, err := askDialog(ModeNote, "", "", "", 560, 320, "", "center", "")
+	_, err := askDialog(ModeNote, "", "", "", 560, 320, "", "center", "", 1)
 	if err == nil || !strings.Contains(err.Error(), "xdotool not found on PATH") {
 		t.Fatalf("err = %v, want xdotool-not-found error", err)
 	}
@@ -191,7 +191,7 @@ func TestAskDialogInvalidPositionErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)
-	_, err := askDialog(ModeNote, "", "", "", 560, 320, "", "not-a-place", "")
+	_, err := askDialog(ModeNote, "", "", "", 560, 320, "", "not-a-place", "", 1)
 	if err == nil || !strings.Contains(err.Error(), "invalid popup position") {
 		t.Fatalf("err = %v, want invalid-position error", err)
 	}

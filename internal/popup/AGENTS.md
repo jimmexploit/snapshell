@@ -11,12 +11,16 @@ position after it spawns (`[popup].position`).
 ## Design: one zenity dialog per mode, spawned by the daemon
 
 `popup.Capture(mode, sessionDir, file, text string, width, height int,
-font, position, theme string)` is the single entry point. It blocks until
-the dialog closes: it launches zenity, reads the caption/note text from
-its stdout, then appends the finished entry to `<sessionDir>/blog.md` via
-`internal/blog`. It must be run in its own goroutine by the daemon — a
-slow or ignored dialog must never block the daemon or the next hotkey
-press.
+font, position, theme string, count int)` is the single entry point. It
+blocks until the dialog closes: it launches zenity, reads the caption/note
+text from its stdout, then appends the finished entry to
+`<sessionDir>/blog.md` via `internal/blog`. It must be run in its own
+goroutine by the daemon — a slow or ignored dialog must never block the
+daemon or the next hotkey press. `count` is how many commands the capture
+spans (code mode only): for `count > 1` the window title gains a
+multiplication-sign suffix (`snapshell - command ×2`) so a multi-command
+Alt+2 capture is visibly different; other modes ignore it, and the
+position mover searches by substring so the suffix doesn't break it.
 
 Because the dialog is spawned **inside the daemon process** (a synchronous
 `exec.Command`), there is no separate popup subprocess and no temp file:
@@ -67,7 +71,9 @@ space (verified against zenity 4.1.90 / libadwaita).
   `snapshell - command`, `snapshell - note`, `snapshell - selected text`.
   No em dash, no "add ". The position mover searches by this exact title,
   so the strings are the single source of truth for both `--title` and
-  `xdotool search --name`.
+  `xdotool search --name`. Code mode appends ` ×N` when the capture spans
+  more than one command (`count > 1`), the visible count-prefix feedback
+  for Alt+2 + digit.
 
 Dynamic label text is escaped for Pango markup (`& < >` → entities) since
 zenity parses labels as markup.

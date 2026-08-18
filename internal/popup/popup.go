@@ -78,8 +78,12 @@ type Result struct {
 // missing, dialog failed to launch, a configured position that can't be
 // applied) — in that case nothing is appended and the caller decides how
 // to fall back. A user pressing cancel is not an error.
-func Capture(mode, sessionDir, file, text string, width, height int, font, position, theme string) error {
-	res, err := askDialog(mode, sessionDir, file, text, width, height, font, position, theme)
+//
+// count is the number of commands this capture spans (code mode only): for
+// count > 1 the window title reports it ("snapshell - command ×2"), so the
+// user can see the count prefix took effect. Other modes ignore it.
+func Capture(mode, sessionDir, file, text string, width, height int, font, position, theme string, count int) error {
+	res, err := askDialog(mode, sessionDir, file, text, width, height, font, position, theme, count)
 	if err != nil {
 		return err
 	}
@@ -87,7 +91,7 @@ func Capture(mode, sessionDir, file, text string, width, height int, font, posit
 }
 
 // askDialog launches the zenity window and returns what the user did.
-func askDialog(mode, sessionDir, file, text string, width, height int, font, position, theme string) (Result, error) {
+func askDialog(mode, sessionDir, file, text string, width, height int, font, position, theme string, count int) (Result, error) {
 	bin, err := resolveZenity()
 	if err != nil {
 		return Result{}, err
@@ -105,7 +109,7 @@ func askDialog(mode, sessionDir, file, text string, width, height int, font, pos
 		}
 	}
 
-	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height, font)...)
+	cmd := exec.Command(bin, zenityArgs(mode, sessionDir, file, text, width, height, font, count)...)
 	if theme != "" {
 		// GTK_THEME re-themes the dialog at spawn time; a missing theme
 		// falls back to the system default silently (GTK's own behavior).
@@ -123,7 +127,7 @@ func askDialog(mode, sessionDir, file, text string, width, height int, font, pos
 		if winH <= 0 {
 			winH = 320
 		}
-		go moveDialog(dialogTitle(mode), position, winW, winH)
+		go moveDialog(dialogTitle(mode, count), position, winW, winH)
 	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -159,7 +163,7 @@ func resultFromExit(code int, out string) Result {
 // input fills the window and wraps, so the user can always see everything
 // they type. A `--forms` single-line entry was tried but it can't grow,
 // and zenity just leaves the rest of the window as dead space.
-func zenityArgs(mode, sessionDir, file, text string, width, height int, font string) []string {
+func zenityArgs(mode, sessionDir, file, text string, width, height int, font string, count int) []string {
 	args := []string{}
 	if width > 0 {
 		args = append(args, "--width", strconv.Itoa(width))
@@ -175,7 +179,7 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 	case ModeImage:
 		label := describeImage(filepath.Join(sessionDir, file), file)
 		return append(args, "--text-info", "--editable",
-			"--title="+dialogTitle(mode),
+			"--title="+dialogTitle(mode, count),
 			"--text="+escapeMarkup(label),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
@@ -186,7 +190,7 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 		)
 	case ModeCode, ModeSelection:
 		return append(args, "--text-info", "--editable",
-			"--title="+dialogTitle(mode),
+			"--title="+dialogTitle(mode, count),
 			"--text="+escapeMarkup(truncatePreview(text)),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
@@ -197,14 +201,14 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 		)
 	case ModeNote:
 		return append(args, "--text-info", "--editable",
-			"--title="+dialogTitle(mode),
+			"--title="+dialogTitle(mode, count),
 			"--text=Write your note below, then press Save.",
 			"--ok-label=Save",
 			"--cancel-label=Discard",
 		)
 	default:
 		return append(args, "--text-info", "--editable",
-			"--title="+dialogTitle(mode),
+			"--title="+dialogTitle(mode, count),
 			"--ok-label=Save",
 			"--cancel-label=Skip",
 		)
@@ -215,19 +219,31 @@ func zenityArgs(mode, sessionDir, file, text string, width, height int, font str
 // finds the dialog by this title, so it must match what zenity shows.
 // Titles use a plain hyphen after "snapshell" (no em dash), and the label
 // describes the thing being captured, not the action.
-func dialogTitle(mode string) string {
+//
+// count is how many commands the capture spans (code mode only): when it is
+// 1 (the default) the plain title is shown; when it is more than one a
+// multiplication-sign suffix reports the count ("snapshell - command ×2"),
+// so a multi-command Alt+2 capture is visibly different from a single one.
+// The position mover searches the window title by substring, so the suffix
+// doesn't break positioning.
+func dialogTitle(mode string, count int) string {
+	title := ""
 	switch mode {
 	case ModeImage:
-		return "snapshell - screenshot"
+		title = "snapshell - screenshot"
 	case ModeCode:
-		return "snapshell - command"
+		title = "snapshell - command"
 	case ModeNote:
-		return "snapshell - note"
+		title = "snapshell - note"
 	case ModeSelection:
-		return "snapshell - selected text"
+		title = "snapshell - selected text"
 	default:
-		return "snapshell"
+		title = "snapshell"
 	}
+	if mode == ModeCode && count > 1 {
+		return title + " ×" + strconv.Itoa(count)
+	}
+	return title
 }
 
 // applyResult writes the finished entry to blog.md. Factored out of

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -44,6 +45,10 @@ type CaptureConfig struct {
 	// (Alt+1/2/3/4) so edits apply without restarting the daemon. Default
 	// false — the reload hotkey covers manual reloads.
 	ReloadOnHotkey *bool `toml:"reload_on_hotkey"`
+	// CountTimeoutMs is how long after Alt+2 the daemon waits for a digit
+	// (1-9) that sets how many recent commands to capture at once. 0 or
+	// negative = DefaultCommandCountTimeout.
+	CountTimeoutMs int `toml:"count_timeout_ms"`
 }
 
 // DefaultPopupWidth/Height are the reference popup dimensions. The 560:320
@@ -52,6 +57,10 @@ const (
 	DefaultPopupWidth  = 560
 	DefaultPopupHeight = 320
 )
+
+// DefaultCommandCountTimeout is how long Alt+2 waits for a count digit when
+// count_timeout_ms is unset or non-positive.
+const DefaultCommandCountTimeout = 1500
 
 // PopupConfig configures the zenity caption/note window.
 type PopupConfig struct {
@@ -117,7 +126,7 @@ func Default() *Config {
 	reloadOnHotkey := false
 	return &Config{
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
-		Capture:    CaptureConfig{IncludeOutput: &includeOutput, ReloadOnHotkey: &reloadOnHotkey},
+		Capture:    CaptureConfig{IncludeOutput: &includeOutput, ReloadOnHotkey: &reloadOnHotkey, CountTimeoutMs: DefaultCommandCountTimeout},
 		Popup:      PopupConfig{Width: DefaultPopupWidth, Height: DefaultPopupHeight, Font: "Sans 13", KeepRatio: &keepRatio},
 		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
@@ -141,6 +150,16 @@ func (c *Config) OutputIncluded() bool {
 // capture flow (default false).
 func (c *Config) ReloadOnHotkeyOn() bool {
 	return c.Capture.ReloadOnHotkey != nil && *c.Capture.ReloadOnHotkey
+}
+
+// CountTimeout returns how long Alt+2 waits for a command-count digit after
+// the hotkey fires (default 1500ms).
+func (c *Config) CountTimeout() time.Duration {
+	ms := c.Capture.CountTimeoutMs
+	if ms <= 0 {
+		ms = DefaultCommandCountTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -294,6 +313,11 @@ const defaultFileText = `# snapshell configuration
   # so edits apply immediately. false = apply changes via the reload hotkey
   # (or by restarting the daemon).
   reload_on_hotkey = false
+  # Milliseconds after Alt+2 during which pressing a number (1-9) sets how
+  # many recent commands to capture at once (Alt+2 then 2 = the last two
+  # commands, captured together). 0 = 1500. No number pressed = capture the
+  # last command only.
+  count_timeout_ms = 1500
 
 [keymaps]
   # Global hotkeys. Format: modifiers separated by "+", then a key.
@@ -334,6 +358,9 @@ func fillDefaults(c *Config) {
 	}
 	if c.Capture.ReloadOnHotkey == nil {
 		c.Capture.ReloadOnHotkey = def.Capture.ReloadOnHotkey
+	}
+	if c.Capture.CountTimeoutMs <= 0 {
+		c.Capture.CountTimeoutMs = def.Capture.CountTimeoutMs
 	}
 	if c.Popup.Width <= 0 {
 		c.Popup.Width = def.Popup.Width

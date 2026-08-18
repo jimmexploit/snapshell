@@ -52,6 +52,22 @@ Do **not**:
   cleanly stopped when `unregister` is called (don't leak the goroutine
   on daemon shutdown).
 
+## Command-count digits (Alt+2 + digit)
+
+`WaitForDigit(window time.Duration) (int, error)` grabs the number keys
+1-9 (no modifier) and returns the first one pressed, or 0 when none is
+pressed within `window`. It backs the Alt+2 command count: the daemon
+calls it from the capture goroutine right after Alt+2 fires, and a digit
+pressed in that window makes the capture span that many commands. It uses
+its own short-lived X connection + `xevent.Main` loop so the main hotkey
+event loop is never blocked while waiting; grabs are released as soon as
+the first digit fires or the window elapses, so the digit keys are
+swallowed for the shortest possible time. A single digit whose grab is
+owned by another app is best-effort (that digit just isn't a count) — the
+rest still work. Grabbing no digits at all is a named error. Shifted or
+NumLock-modified presses don't match the no-modifier grab and pass through
+to the focused window.
+
 ## Testing note
 
 There's no clean unit-testing story for real X11 grabs. Structure the
