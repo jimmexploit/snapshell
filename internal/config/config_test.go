@@ -393,3 +393,41 @@ func TestReloadOnHotkeyTrueHonored(t *testing.T) {
 		t.Fatalf("reload keymap = %q, want configured F5", cfg.Keymaps.Reload)
 	}
 }
+
+func TestImageModeDefaultsAndResolution(t *testing.T) {
+	// Missing key → default "kitty".
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[inventory]\nimage_viewer = \"feh\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := cfg.ImageMode(); got != "kitty" {
+		t.Fatalf("ImageMode() = %q, want default kitty", got)
+	}
+
+	// Explicit external honored.
+	path = filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[inventory]\nimage_mode = \"external\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := cfg.ImageMode(); got != "external" {
+		t.Fatalf("ImageMode() = %q, want external", got)
+	}
+
+	// Case-insensitive and unknown values fall back to kitty.
+	cfg.Inventory.ImageMode = "KITTY"
+	if got := cfg.ImageMode(); got != "kitty" {
+		t.Fatalf("ImageMode() = %q, want normalized kitty", got)
+	}
+	cfg.Inventory.ImageMode = "bogus"
+	if got := cfg.ImageMode(); got != "kitty" {
+		t.Fatalf("ImageMode() = %q, want kitty for unknown value", got)
+	}
+}

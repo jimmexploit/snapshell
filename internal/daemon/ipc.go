@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+
+	"snapshell/internal/inventory"
 )
 
 // Request is a single newline-delimited JSON request sent by the CLI over
@@ -14,19 +16,45 @@ type Request struct {
 }
 
 // Response is the daemon's reply. Exactly one of Message/Error is set.
+// Data carries structured payloads (card lists, status details) for the
+// verbs that return more than a human-readable message; it is empty for
+// plain ok/fail replies.
 type Response struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message,omitempty"`
-	Error   string `json:"error,omitempty"`
+	OK      bool            `json:"ok"`
+	Message string          `json:"message,omitempty"`
+	Error   string          `json:"error,omitempty"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 // Command names understood by the daemon.
 const (
-	CmdStart      = "start"       // start a session (args: name)
+	CmdStart      = "start"       // start a session (args: name, mode)
 	CmdStop       = "stop"        // stop the active session
 	CmdStatus     = "status"      // report pid + active session
 	CmdDaemonStop = "daemon_stop" // shut the daemon down
+
+	// Inventory-mode verbs (args: see each handler).
+	CmdList    = "list"    // list pending cards (no args)
+	CmdCommit  = "commit"  // commit a card (args: id, caption)
+	CmdDiscard = "discard" // permanently discard a card (args: id, confirm)
+	CmdNote    = "note"    // append a standalone note (args: text)
 )
+
+// StatusData is the structured payload behind the status verb.
+type StatusData struct {
+	Session string `json:"session,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Entries int    `json:"entries,omitempty"`
+	Pending int    `json:"pending,omitempty"`
+}
+
+// ListData is the structured payload behind the list verb. Dir is the
+// absolute session folder, so the review TUI can read blog.md directly for
+// its render view without resolving session-relative paths itself.
+type ListData struct {
+	Dir   string           `json:"dir"`
+	Cards []inventory.Card `json:"cards"`
+}
 
 func ok(msg string) Response   { return Response{OK: true, Message: msg} }
 func fail(msg string) Response { return Response{OK: false, Error: msg} }

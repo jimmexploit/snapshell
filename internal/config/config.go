@@ -25,6 +25,7 @@ type Config struct {
 	Keymaps    KeymapConfig     `toml:"keymaps"`
 	Paths      PathsConfig      `toml:"paths"`
 	Themes     ThemesConfig     `toml:"themes"`
+	Inventory  InventoryConfig  `toml:"inventory"`
 }
 
 // ScreenshotConfig configures the Alt+1 capture tool.
@@ -118,6 +119,27 @@ type KeymapConfig struct {
 	Reload string `toml:"reload"`
 }
 
+// DefaultInventoryCloseDelay is how long the review TUI leaves an image open
+// in the external viewer before trying to close it, when close_delay_secs is
+// unset or non-positive.
+const DefaultInventoryCloseDelay = 5
+
+// InventoryConfig configures the review TUI's screenshot preview
+// (inventory mode).
+type InventoryConfig struct {
+	// ImageViewer is the binary used to open captured screenshots for a
+	// quick look. Empty = the system default (xdg-open).
+	ImageViewer string `toml:"image_viewer"`
+	// CloseDelaySecs is how long an opened image stays on screen before the
+	// TUI best-effort closes it (default DefaultInventoryCloseDelay).
+	CloseDelaySecs int `toml:"close_delay_secs"`
+	// ImageMode selects how Enter on an image card shows the screenshot:
+	// "kitty" renders it full-screen inside the terminal (kitty only, falls
+	// back to the external viewer otherwise); "external" opens it in
+	// ImageViewer. Default "kitty".
+	ImageMode string `toml:"image_mode"`
+}
+
 // Default returns the built-in configuration values. SessionRoot is the
 // per-user location sessions land in (a leading "~/" is expanded by Load).
 func Default() *Config {
@@ -131,6 +153,7 @@ func Default() *Config {
 		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5"},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 		Themes:     ThemesConfig{},
+		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty"},
 	}
 }
 
@@ -160,6 +183,28 @@ func (c *Config) CountTimeout() time.Duration {
 		ms = DefaultCommandCountTimeout
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// CloseDelay returns how long the review TUI leaves an opened image on
+// screen before best-effort closing it (default 5s).
+func (c *Config) CloseDelay() time.Duration {
+	secs := c.Inventory.CloseDelaySecs
+	if secs <= 0 {
+		secs = DefaultInventoryCloseDelay
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// ImageMode returns how the review TUI shows screenshots on Enter: "kitty"
+// renders them full-screen in the terminal (only when running under kitty),
+// "external" opens them in the configured image viewer. Unknown or empty
+// values resolve to "kitty".
+func (c *Config) ImageMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Inventory.ImageMode))
+	if mode != "kitty" && mode != "external" {
+		mode = "kitty"
+	}
+	return mode
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -345,6 +390,22 @@ const defaultFileText = `# snapshell configuration
   # outside the standard locations (/usr/share/themes, ~/.themes,
   # ~/.local/share/themes). Empty = standard locations only.
   root = ""
+
+[inventory]
+  # Inventory mode: captures land silently in a pending queue reviewed in
+  # 'snapshell inventory'. Image viewer used to peek at a captured
+  # screenshot from the review TUI (Enter on an image card). Empty = the
+  # system default (xdg-open). Set it to a viewer like "feh" for a
+  # guaranteed auto-close.
+  image_viewer = ""
+  # Seconds an opened image stays up before the TUI best-effort closes it
+  # (0 = 5). Auto-close may not fire for default viewers that hand the
+  # image to an already-running instance.
+  close_delay_secs = 5
+  # How Enter on an image card shows the screenshot: "kitty" renders it
+  # full-screen inside the terminal (requires running in kitty; falls back
+  # to the external viewer otherwise), "external" opens it in image_viewer.
+  image_mode = "kitty"
 `
 
 // fillDefaults replaces empty/zero values with the built-in defaults.
@@ -391,6 +452,12 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot
+	}
+	if c.Inventory.CloseDelaySecs <= 0 {
+		c.Inventory.CloseDelaySecs = def.Inventory.CloseDelaySecs
+	}
+	if strings.TrimSpace(c.Inventory.ImageMode) == "" {
+		c.Inventory.ImageMode = def.Inventory.ImageMode
 	}
 }
 

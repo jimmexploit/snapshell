@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"snapshell/internal/capture/tmuxcap"
 	"snapshell/internal/config"
 	"snapshell/internal/hotkeys"
+	"snapshell/internal/inventory"
 	"snapshell/internal/notify"
 	"snapshell/internal/popup"
 )
@@ -39,11 +41,25 @@ type Options struct {
 	DisableHotkeys bool
 }
 
+// SessionMode is the mode a session runs in: normal (popup on every
+// capture) or inventory (silent captures queued for review).
+type SessionMode string
+
+const (
+	ModeNormal    SessionMode = "normal"
+	ModeInventory SessionMode = "inventory"
+)
+
 // Session is the in-memory state of the active session.
 type Session struct {
 	Name      string
 	Dir       string
 	AttachNum int // last-assigned attachment number (derived on resume)
+	Mode      SessionMode
+	// Queue is the pending-card queue, non-nil only for inventory sessions.
+	// It is owned by the daemon (single writer); the review TUI mutates it
+	// over IPC.
+	Queue *inventory.Queue
 }
 
 // CaptureHandler is invoked on hotkey firing. kind is "screenshot", "code",
@@ -385,6 +401,14 @@ func (d *Daemon) handleConn(conn net.Conn) {
 	case CmdDaemonStop:
 		d.writeResponse(conn, ok("daemon shutting down"))
 		d.triggerShutdown()
+	case CmdList:
+		d.writeResponse(conn, d.handleList())
+	case CmdCommit:
+		d.writeResponse(conn, d.handleCommit(req))
+	case CmdDiscard:
+		d.writeResponse(conn, d.handleDiscard(req))
+	case CmdNote:
+		d.writeResponse(conn, d.handleNote(req))
 	default:
 		d.writeResponse(conn, fail(fmt.Sprintf("unknown command %q", req.Cmd)))
 	}
@@ -421,6 +445,16 @@ func (d *Daemon) handleStart(req Request) Response {
 		return fail("session name must not contain '/'")
 	}
 
+	// The mode is expressed by whether the CLI passed "inventory" as the
+	// first argument after `start`; the daemon just receives it as an arg.
+	requested := SessionMode(strings.TrimSpace(req.Args["mode"]))
+	if requested == "" {
+		requested = ModeNormal
+	}
+	if requested != ModeNormal && requested != ModeInventory {
+		return fail(fmt.Sprintf("unknown session mode %q", requested))
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -431,6 +465,23 @@ func (d *Daemon) handleStart(req Request) Response {
 	sessionDir, created, err := setupSessionDir(d.sessionRoot, name)
 	if err != nil {
 		return fail(fmt.Sprintf("create session folder: %v", err))
+	}
+
+	// A resumed session keeps the mode it was started with — never let a
+	// bare `start` silently downgrade an inventory session, nor `start
+	// inventory` upgrade a normal one. A brand-new session simply takes the
+	// requested mode.
+	if !created {
+		existing := readMode(sessionDir)
+		if existing != requested {
+			if existing == ModeInventory {
+				return fail(fmt.Sprintf("session %q exists in inventory mode — use 'snapshell start inventory %s' to resume it, or 'snapshell inventory' to open the review UI", name, name))
+			}
+			return fail(fmt.Sprintf("session %q exists in normal mode — it cannot be opened in inventory mode", name))
+		}
+	}
+	if err := writeMode(sessionDir, requested); err != nil {
+		return fail(fmt.Sprintf("write session mode: %v", err))
 	}
 
 	// Point the shell hook at this session's command log so every command
@@ -444,12 +495,19 @@ func (d *Daemon) handleStart(req Request) Response {
 		return fail(fmt.Sprintf("write active session pointer: %v", err))
 	}
 
-	d.session = &Session{Name: name, Dir: sessionDir, AttachNum: countAttachments(sessionDir)}
-	d.logger.Printf("session started: %s (dir=%s, log=%s, attachments=%d)", name, sessionDir, logPath, d.session.AttachNum)
-	if created {
-		return ok(fmt.Sprintf("started session %q", name))
+	d.session = &Session{Name: name, Dir: sessionDir, AttachNum: countAttachments(sessionDir), Mode: requested}
+	if requested == ModeInventory {
+		q, err := inventory.Load(sessionDir)
+		if err != nil {
+			return fail(fmt.Sprintf("load pending cards: %v", err))
+		}
+		d.session.Queue = q
 	}
-	return ok(fmt.Sprintf("resumed existing session %q", name))
+	d.logger.Printf("session started: %s (dir=%s, log=%s, attachments=%d, mode=%s)", name, sessionDir, logPath, d.session.AttachNum, requested)
+	if created {
+		return ok(fmt.Sprintf("started session %q (%s mode)", name, requested))
+	}
+	return ok(fmt.Sprintf("resumed existing session %q (%s mode)", name, requested))
 }
 
 func (d *Daemon) handleStop() Response {
@@ -472,13 +530,142 @@ func (d *Daemon) handleStatus() Response {
 
 	base := fmt.Sprintf("daemon running (pid=%d)", os.Getpid())
 	if d.session == nil {
-		return ok(base + "; no active session")
+		resp := ok(base + "; no active session")
+		data, err := json.Marshal(StatusData{})
+		if err == nil {
+			resp.Data = data
+		}
+		return resp
 	}
 	count, err := entryCount(d.session.Dir)
 	if err != nil {
 		d.logger.Printf("count entries: %v", err)
 	}
-	return ok(fmt.Sprintf("%s; active session: %s (%d entries)", base, d.session.Name, count))
+	mode := d.session.Mode
+	if mode == "" {
+		mode = ModeNormal
+	}
+	pending := 0
+	if d.session.Queue != nil {
+		pending = d.session.Queue.Len()
+	}
+	msg := fmt.Sprintf("%s; active session: %s (%s mode, %d entries)", base, d.session.Name, mode, count)
+	if mode == ModeInventory {
+		msg += fmt.Sprintf(", %d pending", pending)
+	}
+	resp := ok(msg)
+	if data, err := json.Marshal(StatusData{Session: d.session.Name, Mode: string(mode), Entries: count, Pending: pending}); err == nil {
+		resp.Data = data
+	}
+	return resp
+}
+
+// handleList returns the active session's pending cards, oldest-first. The
+// image cards carry a derived absolute path so the review TUI can open the
+// file without resolving session-relative paths itself; the payload also
+// carries the session dir for the TUI's read-only blog.md render view.
+func (d *Daemon) handleList() Response {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	q, errResp, ok := d.activeQueueLocked()
+	if !ok {
+		return errResp
+	}
+	cards := q.List()
+	for i := range cards {
+		if cards[i].Kind == inventory.KindImage {
+			cards[i].AbsPath = filepath.Join(d.session.Dir, cards[i].Path)
+		}
+	}
+	data, err := json.Marshal(ListData{Dir: d.session.Dir, Cards: cards})
+	if err != nil {
+		return fail(fmt.Sprintf("marshal pending cards: %v", err))
+	}
+	return Response{OK: true, Message: fmt.Sprintf("%d pending", len(cards)), Data: data}
+}
+
+// handleCommit appends a pending card to blog.md (with an optional caption)
+// and removes it from the queue. Empty caption = append as-is.
+func (d *Daemon) handleCommit(req Request) Response {
+	id, err := strconv.Atoi(strings.TrimSpace(req.Args["id"]))
+	if err != nil {
+		return fail("commit requires a numeric card id")
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	q, errResp, haveQueue := d.activeQueueLocked()
+	if !haveQueue {
+		return errResp
+	}
+	if err := q.Commit(id, req.Args["caption"]); err != nil {
+		return fail(err.Error())
+	}
+	d.logger.Printf("inventory: committed card %d", id)
+	return ok(fmt.Sprintf("committed card %d", id))
+}
+
+// handleDiscard permanently removes a pending card (deleting the underlying
+// screenshot for image cards). It requires an explicit confirm flag in the
+// request so the TUI's own y/n prompt is never the only safety check.
+func (d *Daemon) handleDiscard(req Request) Response {
+	if strings.TrimSpace(req.Args["confirm"]) != "true" {
+		return fail("discard is permanent and requires confirm=true")
+	}
+	id, err := strconv.Atoi(strings.TrimSpace(req.Args["id"]))
+	if err != nil {
+		return fail("discard requires a numeric card id")
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	q, errResp, haveQueue := d.activeQueueLocked()
+	if !haveQueue {
+		return errResp
+	}
+	if err := q.Discard(id); err != nil {
+		return fail(err.Error())
+	}
+	d.logger.Printf("inventory: discarded card %d", id)
+	return ok(fmt.Sprintf("discarded card %d", id))
+}
+
+// handleNote appends a standalone note to the active session's blog.md as a
+// plain paragraph (the same entry the Alt+3 flow produces). Notes never pass
+// through the pending queue — they are written directly.
+func (d *Daemon) handleNote(req Request) Response {
+	text := strings.TrimSpace(req.Args["text"])
+	if text == "" {
+		return fail("note requires text")
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.session == nil {
+		return fail("no active session")
+	}
+	if err := blog.Append(d.session.Dir, blog.Entry{Kind: blog.KindNote, NoteText: text}); err != nil {
+		return fail(fmt.Sprintf("append note: %v", err))
+	}
+	d.logger.Printf("inventory: appended standalone note")
+	return ok("note added")
+}
+
+// activeQueueLocked returns the active session's inventory queue, or the
+// response to send when there's no session / no inventory queue. The bool is
+// false in the failure case. d.mu must be held.
+func (d *Daemon) activeQueueLocked() (*inventory.Queue, Response, bool) {
+	if d.session == nil {
+		return nil, fail("no active session"), false
+	}
+	if d.session.Mode != ModeInventory || d.session.Queue == nil {
+		return nil, fail(fmt.Sprintf("session %q is not in inventory mode", d.session.Name)), false
+	}
+	return d.session.Queue, Response{}, true
 }
 
 // sessionLogPath returns the append-only command log path for a session:
@@ -529,6 +716,32 @@ func setupSessionDir(root, name string) (dir string, created bool, err error) {
 	return dir, true, nil
 }
 
+// modeFilePath is where the session's mode lives (<session>/ .snapshell-mode).
+// It rides inside the session folder so a resumed session — after a daemon
+// restart or a stop/start cycle — remembers its original mode.
+func modeFilePath(sessionDir string) string {
+	return filepath.Join(sessionDir, ".snapshell-mode")
+}
+
+// readMode returns the mode a session folder was started with. A session
+// folder without the marker (created before inventory mode existed) is
+// normal mode.
+func readMode(sessionDir string) SessionMode {
+	data, err := os.ReadFile(modeFilePath(sessionDir))
+	if err != nil {
+		return ModeNormal
+	}
+	if strings.TrimSpace(string(data)) == string(ModeInventory) {
+		return ModeInventory
+	}
+	return ModeNormal
+}
+
+// writeMode records the mode a session is running in.
+func writeMode(sessionDir string, m SessionMode) error {
+	return os.WriteFile(modeFilePath(sessionDir), []byte(string(m)+"\n"), 0o600)
+}
+
 // entryCount counts the entries appended to blog.md so far.
 func entryCount(sessionDir string) (int, error) {
 	data, err := os.ReadFile(filepath.Join(sessionDir, "blog.md"))
@@ -559,8 +772,14 @@ func countAttachments(sessionDir string) int {
 }
 
 // dispatchCapture routes a hotkey firing to its capture flow. It runs in
-// its own goroutine per firing (see onHotkey).
+// its own goroutine per firing (see onHotkey). In inventory mode captures
+// queue silently instead of popping the caption window; normal mode keeps
+// today's behavior unchanged.
 func (d *Daemon) dispatchCapture(kind string, s *Session) {
+	if s.Mode == ModeInventory {
+		d.dispatchInventoryCapture(kind, s)
+		return
+	}
 	switch kind {
 	case "screenshot":
 		d.captureScreenshot(s)
@@ -573,6 +792,56 @@ func (d *Daemon) dispatchCapture(kind string, s *Session) {
 	default:
 		d.logger.Printf("capture: unhandled hotkey kind %q", kind)
 	}
+}
+
+// dispatchInventoryCapture handles hotkey firings for an inventory session.
+// Screenshot, command, and selection captures run their normal capture
+// mechanics but skip the popup and land in the pending queue; the raw note
+// hotkey is a no-op (standalone notes are written from the review TUI only).
+func (d *Daemon) dispatchInventoryCapture(kind string, s *Session) {
+	switch kind {
+	case "screenshot":
+		d.captureScreenshot(s)
+	case "code":
+		d.captureCode(s)
+	case "selection":
+		d.captureSelection(s)
+	case "note":
+		d.logger.Printf("inventory: note hotkey ignored in inventory mode")
+		_ = notify.Send("snapshell", "in inventory mode, notes are written from the review TUI — run 'snapshell inventory'")
+	default:
+		d.logger.Printf("capture: unhandled hotkey kind %q", kind)
+	}
+}
+
+// enqueueImage adds a captured screenshot to the active session's pending
+// queue (inventory mode).
+func (d *Daemon) enqueueImage(s *Session, relPath string) {
+	d.enqueue(s, func(q *inventory.Queue) error { return q.AppendImage(relPath) })
+}
+
+// enqueueCode adds captured command text to the active session's pending
+// queue (inventory mode).
+func (d *Daemon) enqueueCode(s *Session, text string) {
+	d.enqueue(s, func(q *inventory.Queue) error { return q.AppendCode(text) })
+}
+
+// enqueue runs a queue mutation and reports the outcome with a notification
+// so a silent capture is never silent about landing.
+func (d *Daemon) enqueue(s *Session, mutate func(*inventory.Queue) error) {
+	if s.Queue == nil {
+		d.logger.Printf("inventory: no pending queue for session %s", s.Name)
+		_ = notify.Send("snapshell", "no pending queue for this session — is it in inventory mode?")
+		return
+	}
+	if err := mutate(s.Queue); err != nil {
+		d.logger.Printf("inventory: enqueue: %v", err)
+		_ = notify.Send("snapshell", "failed to queue capture: "+err.Error())
+		return
+	}
+	n := s.Queue.Len()
+	d.logger.Printf("inventory: queued capture, %d pending", n)
+	_ = notify.Send("snapshell", fmt.Sprintf("captured — %d pending", n))
 }
 
 // nextAttachment allocates the next attachment number for a session. It is
@@ -609,6 +878,13 @@ func (d *Daemon) captureScreenshot(s *Session) {
 	}
 	if res.Cancelled {
 		d.logger.Printf("capture screenshot: cancelled, no entry added")
+		return
+	}
+
+	// Inventory mode: skip the popup entirely, queue the file as a pending
+	// card for the review TUI.
+	if s.Mode == ModeInventory {
+		d.enqueueImage(s, res.RelPath)
 		return
 	}
 
@@ -653,10 +929,26 @@ func (d *Daemon) captureCode(s *Session) {
 		}
 		d.logger.Printf("capture tmux: %v — falling back to recorded last command", err)
 		_ = notify.Send("snapshell", "not in tmux — capturing last command only (no output)")
-		d.appendCodeEntry(s, text, "lastcommand", popup.ModeCode, 1)
+		d.appendCodeEntryOrQueue(s, text, "lastcommand", 1)
 		return
 	}
-	d.appendCodeEntry(s, res.Text, "tmux", popup.ModeCode, res.Count)
+	d.appendCodeEntryOrQueue(s, res.Text, "tmux", res.Count)
+}
+
+// appendCodeEntryOrQueue is the shared tail of the code capture paths. In
+// inventory mode the captured text is queued as a pending card instead of
+// showing the caption window; normal mode keeps the popup + blog-append
+// flow. count is how many commands the capture spans (code mode only).
+func (d *Daemon) appendCodeEntryOrQueue(s *Session, text, source string, count int) {
+	if s.Mode == ModeInventory {
+		if strings.TrimSpace(text) == "" {
+			d.logger.Printf("inventory capture %s: empty capture, nothing queued", source)
+			return
+		}
+		d.enqueueCode(s, text)
+		return
+	}
+	d.appendCodeEntry(s, text, source, popup.ModeCode, count)
 }
 
 // commandCount blocks briefly after Alt+2 waiting for a digit (1-9) that
@@ -738,6 +1030,10 @@ func (d *Daemon) captureSelection(s *Session) {
 		}
 		d.logger.Printf("capture selection: %v", err)
 		_ = notify.Send("snapshell", err.Error())
+		return
+	}
+	if s.Mode == ModeInventory {
+		d.enqueueCode(s, text)
 		return
 	}
 	d.appendCodeEntry(s, text, "selection", popup.ModeSelection, 1)

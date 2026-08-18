@@ -35,6 +35,7 @@ func newRootCmd() *cobra.Command {
 		newStartCmd(),
 		newStopCmd(),
 		newStatusCmd(),
+		newInventoryCmd(),
 		newSetupCmd(),
 		newListFontsCmd(),
 		newListThemesCmd(),
