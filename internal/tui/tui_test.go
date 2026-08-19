@@ -2,11 +2,13 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"snapshell/internal/inventory"
 )
@@ -371,6 +373,55 @@ func TestEmptyQueueViewNoPanic(t *testing.T) {
 	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	if got := m.View(); got == "" {
 		t.Fatal("View() returned empty for an empty queue")
+	}
+}
+
+func TestWrapText(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		w    int
+		want []string
+	}{
+		{"short", "hello", 20, []string{"hello"}},
+		{"wraps at words", "one two three four five", 10, []string{"one two", "three four", "five"}},
+		{"preserves newlines", "abc\ndef", 10, []string{"abc", "def"}},
+		{"hard splits long word", "abcdefghijklmnop", 5, []string{"abcde", "fghij", "klmno", "p"}},
+		{"empty", "", 10, []string{""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Split(wrapText(tc.in, tc.w), "\n")
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("wrapText(%q, %d) = %q, want %q", tc.in, tc.w, got, tc.want)
+			}
+			for _, ln := range got {
+				if lipgloss.Width(ln) > tc.w {
+					t.Fatalf("wrapText(%q, %d) produced a %d-cell line: %q", tc.in, tc.w, lipgloss.Width(ln), ln)
+				}
+			}
+		})
+	}
+}
+
+// TestCaptionLongLineDoesNotPushList guards against the detail column
+// growing past its allotted width: a long caption (or a long line in the
+// code preview) must wrap, not widen the column and shove the list off
+// screen.
+func TestCaptionLongLineDoesNotPushList(t *testing.T) {
+	m, _ := setupModel(t, testCards())
+	m = step(t, m, m.refreshList())
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m, _ = upd(t, m, key("c"))
+
+	long := strings.Repeat("words ", 30)
+	m.caption.SetValue(long)
+	m.captionPreview = long
+
+	for _, ln := range strings.Split(m.View(), "\n") {
+		if w := lipgloss.Width(ln); w > m.width {
+			t.Fatalf("view line %d cells wide exceeds terminal width %d: %q", w, m.width, ln)
+		}
 	}
 }
 

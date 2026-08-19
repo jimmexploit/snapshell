@@ -198,7 +198,7 @@ func (m model) captionPane(w, h int) string {
 	lines = append(lines, m.caption.View())
 	lines = append(lines, "")
 	lines = append(lines, titleStyle.Render("Preview"))
-	lines = append(lines, m.captionPreviewText(c))
+	lines = append(lines, wrapText(m.captionPreviewText(c), w))
 	return fillPane(strings.Join(lines, "\n"), w, h)
 }
 
@@ -232,7 +232,7 @@ func (m model) notePane() string {
 	if strings.TrimSpace(m.notePreview) == "" {
 		lines = append(lines, dimStyle.Render("(nothing written yet — Ctrl+S saves, Esc cancels)"))
 	} else {
-		lines = append(lines, m.notePreview)
+		lines = append(lines, wrapText(m.notePreview, m.width))
 	}
 	return fillPane(strings.Join(lines, "\n"), m.width, paneH)
 }
@@ -337,6 +337,73 @@ func fillPane(s string, w, h int) string {
 		lines = lines[:h]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// wrapText soft-wraps s to at most w display cells per line, preserving
+// existing line breaks. Words longer than w are hard-split, so no output
+// line can ever exceed w — an unwrapped line in a side-by-side column would
+// otherwise widen the column and push its sibling off screen.
+func wrapText(s string, w int) string {
+	if w < 1 {
+		w = 1
+	}
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		out = append(out, wrapLine(line, w)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+// wrapLine wraps a single newline-free line to at most w cells.
+func wrapLine(line string, w int) []string {
+	if lipgloss.Width(line) <= w {
+		return []string{line}
+	}
+	var lines []string
+	var cur []rune
+	curW := 0
+	flush := func() {
+		lines = append(lines, string(cur))
+		cur, curW = nil, 0
+	}
+	for _, word := range strings.Fields(line) {
+		wordR := []rune(word)
+		ww := lipgloss.Width(word)
+		if curW > 0 {
+			if curW+1+ww <= w {
+				cur = append(cur, ' ')
+				cur = append(cur, wordR...)
+				curW += 1 + ww
+				continue
+			}
+			flush()
+		}
+		// The word doesn't fit on an empty line; hard-split it.
+		for lipgloss.Width(string(wordR)) > w {
+			i := 0
+			pw := 0
+			for i < len(wordR) && pw+lipgloss.Width(string(wordR[i])) <= w {
+				pw += lipgloss.Width(string(wordR[i]))
+				i++
+			}
+			if i == 0 {
+				i = 1
+			}
+			lines = append(lines, string(wordR[:i]))
+			wordR = wordR[i:]
+		}
+		if len(wordR) > 0 {
+			cur = append(cur, wordR...)
+			curW = lipgloss.Width(string(wordR))
+		}
+	}
+	if len(cur) > 0 {
+		flush()
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines
 }
 
 // clipWidth truncates a string to at most w display cells.
