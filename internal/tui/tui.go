@@ -42,6 +42,7 @@ type Options struct {
 	ImageViewer string        // binary to peek at screenshots; "" = xdg-open
 	CloseDelay  time.Duration // how long an opened image stays up
 	ImageMode   string        // "kitty" (in-terminal) or "external" viewer
+	ImageScale  float64       // in-terminal size multiplier: 1.0 = fit the pane
 }
 
 // Run starts the review TUI in the foreground and blocks until the user
@@ -50,6 +51,9 @@ type Options struct {
 func Run(opts Options) error {
 	if opts.CloseDelay <= 0 {
 		opts.CloseDelay = 5 * time.Second
+	}
+	if opts.ImageScale <= 0 {
+		opts.ImageScale = 1
 	}
 	p := tea.NewProgram(newModel(opts), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -126,6 +130,9 @@ type model struct {
 }
 
 func newModel(opts Options) model {
+	if opts.ImageScale <= 0 {
+		opts.ImageScale = 1
+	}
 	caption := textarea.New()
 	caption.Placeholder = "Caption (optional) — Ctrl+S appends, Esc cancels"
 	caption.ShowLineNumbers = false

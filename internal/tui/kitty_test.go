@@ -10,6 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"snapshell/internal/inventory"
 )
 
 func writePNG(t *testing.T, path string, w, h int) {
@@ -163,6 +168,41 @@ func TestKittyFrameDisabled(t *testing.T) {
 	}
 	if got := kittyFrameNoImage(); got != "" {
 		t.Fatalf("disabled kittyFrameNoImage = %q", got)
+	}
+}
+
+func TestImageScaleShrinksRows(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	defer resetKittyState()
+
+	imgPath := filepath.Join(t.TempDir(), "attachments", "001.png")
+	writePNG(t, imgPath, 100, 100) // square image: fit = full pane height
+
+	cards := []inventory.Card{
+		{ID: 1, Kind: inventory.KindImage, Path: "attachments/001.png", AbsPath: imgPath, Created: time.Now()},
+	}
+	m, _ := setupModel(t, cards)
+	m = step(t, m, m.refreshList())
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	full := m.imageRows(cards[0])
+	if full <= 0 {
+		t.Fatal("full-size rows should be > 0 in kitty")
+	}
+	m.opts.ImageScale = 0.5
+	if half := m.imageRows(cards[0]); half != int(float64(full)*0.5+0.5) {
+		t.Fatalf("50%% scale rows = %d, want %d", half, int(float64(full)*0.5+0.5))
+	}
+	// Scale 100 (or unset) restores the full fit.
+	m.opts.ImageScale = 1
+	if got := m.imageRows(cards[0]); got != full {
+		t.Fatalf("100%% scale rows = %d, want %d", got, full)
+	}
+	// A scale so small there's not even one row → unrenderable → external
+	// fallback (0 rows).
+	m.opts.ImageScale = 0.01
+	if got := m.imageRows(cards[0]); got != 0 {
+		t.Fatalf("1%% scale should be unrenderable, got %d rows", got)
 	}
 }
 

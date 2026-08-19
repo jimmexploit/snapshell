@@ -125,6 +125,12 @@ type KeymapConfig struct {
 // unset or non-positive.
 const DefaultInventoryCloseDelay = 5
 
+// DefaultImageScalePercent is the default [inventory].image_scale_percent:
+// 100 = the image is rendered as large as the pane allows (the classic
+// full-screen fit). Lower values render the image proportionally smaller
+// while keeping its aspect ratio.
+const DefaultImageScalePercent = 100
+
 // BlogConfig configures how blog.md entries are laid out.
 type BlogConfig struct {
 	// CaptionPosition places the caption of an image/code entry either
@@ -147,6 +153,11 @@ type InventoryConfig struct {
 	// back to the external viewer otherwise); "external" opens it in
 	// ImageViewer. Default "kitty".
 	ImageMode string `toml:"image_mode"`
+	// ImageScalePercent is how large the in-terminal image is rendered as a
+	// percentage of the size that would exactly fit the pane: 100 (default)
+	// = full fit, 50 = half size. The aspect ratio is always preserved. Out
+	// of range values fall back to the default. Ignored in "external" mode.
+	ImageScalePercent int `toml:"image_scale_percent"`
 }
 
 // Default returns the built-in configuration values. SessionRoot is the
@@ -163,7 +174,7 @@ func Default() *Config {
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 		Themes:     ThemesConfig{},
 		Blog:       BlogConfig{CaptionPosition: "above"},
-		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty"},
+		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty", ImageScalePercent: DefaultImageScalePercent},
 	}
 }
 
@@ -222,6 +233,19 @@ func (c *Config) ImageMode() string {
 		mode = "kitty"
 	}
 	return mode
+}
+
+// ImageScale returns the multiplier for the in-terminal image size, derived
+// from [inventory].image_scale_percent: 1.0 renders the image as large as
+// the pane allows, 0.5 half that, etc. The aspect ratio is always kept. A
+// percent outside the sane 1..100 range (including 0 and negative, i.e. an
+// unset key) resolves to the default 100 (multiplier 1.0).
+func (c *Config) ImageScale() float64 {
+	pct := c.Inventory.ImageScalePercent
+	if pct < 1 || pct > 100 {
+		pct = DefaultImageScalePercent
+	}
+	return float64(pct) / 100
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -423,6 +447,10 @@ const defaultFileText = `# snapshell configuration
   # full-screen inside the terminal (requires running in kitty; falls back
   # to the external viewer otherwise), "external" opens it in image_viewer.
   image_mode = "kitty"
+  # How large the in-terminal image is rendered, as a percentage of the size
+  # that would exactly fit the pane. 100 = full fit, 50 = half size, etc.
+  # The aspect ratio is always preserved. Ignored in "external" mode.
+  image_scale_percent = 100
 
 [blog]
   # Where the caption of an image/code entry sits in blog.md relative to
@@ -481,6 +509,9 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Inventory.ImageMode) == "" {
 		c.Inventory.ImageMode = def.Inventory.ImageMode
+	}
+	if c.Inventory.ImageScalePercent <= 0 {
+		c.Inventory.ImageScalePercent = def.Inventory.ImageScalePercent
 	}
 	if strings.TrimSpace(c.Blog.CaptionPosition) == "" {
 		c.Blog.CaptionPosition = def.Blog.CaptionPosition

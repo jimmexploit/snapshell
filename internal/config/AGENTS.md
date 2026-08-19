@@ -53,6 +53,17 @@ root = ""                 # extra dir to scan for installed themes
 caption_position = "above"  # where the caption of an image/code entry sits
                             # in blog.md: "above" (default) or "below";
                             # note entries have no caption and ignore it
+
+[inventory]
+image_viewer = ""           # binary for peeking at screenshots ("feh", ...)
+                            # "" = xdg-open
+close_delay_secs = 5        # seconds an opened image stays up before
+                            # best-effort close (0 = 5)
+image_mode = "kitty"        # "kitty" = render in-terminal (full-screen,
+                            # falls back to external), "external" = viewer
+image_scale_percent = 100   # in-terminal image size as % of the full-pane
+                            # fit: 100 = fit, 50 = half; aspect kept;
+                            # out of 1..100 resolves to 100; external ignores
 ```
 
 ## Behavior

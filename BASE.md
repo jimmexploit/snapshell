@@ -20,7 +20,7 @@ hotkeys.WaitForDigit, the [capture].count_timeout_ms key, and the popup
 the plain no-digit path), but it is NOT known to be very stable yet —
 treat it as a candidate, not a trusted fallback.
 
-## INVENTORY MODE — WORKING AS OUTER RENDERING, NOT YET HUMAN-PROVEN
+## INVENTORY MODE — WORKING AS OUTER RENDERING, NOT YET HUMAN-PROVEN, STABLE SO FAR, REVERT TO THIS IF USER INSTRUCTED YOU
 
 Commit: 92422ad (inventory mode: silent-capture queue, review TUI, in-terminal image preview)
 Date:   2026-08-18

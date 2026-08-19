@@ -127,6 +127,16 @@ func (m model) imageRows(c inventory.Card) int {
 	}
 	_, _, paneH := m.paneDims()
 	rows := kittyFitRows(cfg.Width, cfg.Height, m.width, paneH)
+	if rows > 0 && m.opts.ImageScale < 1 {
+		// [inventory].image_scale_percent: render the image proportionally
+		// smaller than the full-pane fit (aspect ratio preserved by kitty
+		// deriving the width from the rows). Too small to fit even one row
+		// falls back to the external viewer.
+		rows = int(float64(rows)*m.opts.ImageScale + 0.5)
+		if rows < 1 {
+			rows = 0
+		}
+	}
 	if rows <= 0 {
 		logf("imageRows: kittyFitRows=0 (w=%d h=%d img=%dx%d)", m.width, paneH, cfg.Width, cfg.Height)
 	}

@@ -246,6 +246,38 @@ func TestCaptionPositionConfig(t *testing.T) {
 	}
 }
 
+func TestImageScaleConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	// Default is a full-pane fit (multiplier 1.0).
+	if cfg := load(""); cfg.ImageScale() != 1.0 {
+		t.Fatalf("default ImageScale = %v, want 1.0", cfg.ImageScale())
+	}
+	if cfg := load("[inventory]\nimage_scale_percent = 50\n"); cfg.ImageScale() != 0.5 {
+		t.Fatalf("50%% scale = %v, want 0.5", cfg.ImageScale())
+	}
+	if cfg := load("[inventory]\nimage_scale_percent = 33\n"); cfg.ImageScale() != 0.33 {
+		t.Fatalf("33%% scale = %v, want 0.33", cfg.ImageScale())
+	}
+	// Out-of-range (0, negative, >100) resolves to the default.
+	for _, v := range []string{"0", "-20", "150"} {
+		if cfg := load("[inventory]\nimage_scale_percent = " + v + "\n"); cfg.ImageScale() != 1.0 {
+			t.Fatalf("scale %s should clamp to 1.0, got %v", v, cfg.ImageScale())
+		}
+	}
+}
+
 func TestKeepRatioDefaultOn(t *testing.T) {
 	cfg := loadPopup(t, "width = 560\nheight = 320\n")
 	if !cfg.KeepRatioOn() {
@@ -307,7 +339,7 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\""} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_scale_percent = 100"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}

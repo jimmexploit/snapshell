@@ -61,6 +61,7 @@ func runTUI() error {
 		ImageViewer: cfg.Inventory.ImageViewer,
 		CloseDelay:  cfg.CloseDelay(),
 		ImageMode:   cfg.ImageMode(),
+		ImageScale:  cfg.ImageScale(),
 	})
 }
 
