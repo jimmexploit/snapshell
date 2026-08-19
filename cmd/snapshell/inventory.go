@@ -57,11 +57,13 @@ func runTUI() error {
 		cfg = config.Default()
 	}
 	return tui.Run(tui.Options{
-		Client:      ipcClient{},
-		ImageViewer: cfg.Inventory.ImageViewer,
-		CloseDelay:  cfg.CloseDelay(),
-		ImageMode:   cfg.ImageMode(),
-		ImageScale:  cfg.ImageScale(),
+		Client:           ipcClient{},
+		ImageViewer:      cfg.Inventory.ImageViewer,
+		CloseDelay:       cfg.CloseDelay(),
+		ImageMode:        cfg.ImageMode(),
+		ImageScale:       cfg.ImageScale(),
+		ImageRender:      cfg.ImageRender(),
+		ImageInlineScale: cfg.ImageScaleInline(),
 	})
 }
 

@@ -514,6 +514,89 @@ func TestViewEmitsImageThenDelete(t *testing.T) {
 	}
 }
 
+func TestInlineRenderShowsImageInPreview(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	defer resetKittyState()
+
+	imgPath := filepath.Join(t.TempDir(), "attachments", "001.png")
+	writePNG(t, imgPath, 100, 80)
+
+	cards := []inventory.Card{
+		{ID: 1, Kind: inventory.KindImage, Path: "attachments/001.png", AbsPath: imgPath, Created: time.Now()},
+		{ID: 2, Kind: inventory.KindCode, Text: "whoami\njimmex", Created: time.Now()},
+	}
+	m, _ := setupModel(t, cards)
+	m.opts.ImageRender = "inline"
+	m = step(t, m, m.refreshList())
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// Browse with the image card selected transmits the image inline.
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=T,f=100") {
+		t.Fatalf("inline browse should transmit the image:\n%q", view)
+	}
+	if !m.showsImage() {
+		t.Fatal("inline browse with an image selected should report showsImage")
+	}
+
+	// Captioning the image keeps the image on screen — no text preview.
+	m, _ = upd(t, m, key("c"))
+	if m.st != stateCaption {
+		t.Fatalf("expected stateCaption after c, got %d", m.st)
+	}
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=T,f=100") {
+		t.Fatalf("inline caption should keep the image on screen:\n%q", view)
+	}
+	if view := m.View(); strings.Contains(view, "Preview") {
+		t.Fatalf("inline caption should skip the text preview for images:\n%q", view)
+	}
+
+	// Esc back to browse, move to the code card: the image must be deleted.
+	m, _ = upd(t, m, key("esc"))
+	m, _ = upd(t, m, key("down"))
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,q=2\x1b\\") {
+		t.Fatalf("selecting a code card should delete the inline image:\n%q", view)
+	}
+	if m.showsImage() {
+		t.Fatal("a code card selected should not report showsImage")
+	}
+}
+
+func TestInlineImageRowsScale(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	defer resetKittyState()
+
+	imgPath := filepath.Join(t.TempDir(), "attachments", "001.png")
+	writePNG(t, imgPath, 100, 100) // square: fit = full pane height
+
+	cards := []inventory.Card{
+		{ID: 1, Kind: inventory.KindImage, Path: "attachments/001.png", AbsPath: imgPath, Created: time.Now()},
+	}
+	m, _ := setupModel(t, cards)
+	m.opts.ImageRender = "inline"
+	m = step(t, m, m.refreshList())
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	full := m.imageRowsInPane(cards[0], 60, 30, 1.0)
+	if full <= 0 {
+		t.Fatal("full-size inline rows should be > 0 in kitty")
+	}
+	// Default inline scale is 0.5 (half the pane fit).
+	if half := m.inlineImageRows(cards[0], 60, 30); half != int(float64(full)*0.5+0.5) {
+		t.Fatalf("default inline rows = %d, want %d", half, int(float64(full)*0.5+0.5))
+	}
+	// The scale multiplier applies linearly (the 65% cap lives in config).
+	m.opts.ImageInlineScale = 0.9
+	if got := m.inlineImageRows(cards[0], 60, 30); got != int(float64(full)*0.9+0.5) {
+		t.Fatalf("90%% inline rows = %d, want %d", got, int(float64(full)*0.9+0.5))
+	}
+	// Tab mode (ImageRender default) does not treat the pane as inline.
+	m.opts.ImageRender = "tab"
+	m.opts.ImageInlineScale = 0.5
+	if m.showsImage() {
+		t.Fatal("tab mode should not report showsImage in browse")
+	}
+}
+
 func TestEnterImageExternalMode(t *testing.T) {
 	imgPath := filepath.Join(t.TempDir(), "attachments", "001.png")
 	writePNG(t, imgPath, 100, 80)

@@ -58,10 +58,21 @@ func (m model) View() string {
 }
 
 // showsImage reports whether the current view displays a screenshot via the
-// kitty graphics protocol — only the full-screen stateImage view does, so
-// every other frame carries the delete escape that clears a stale image.
+// kitty graphics protocol: the full-screen stateImage view always does, and
+// the browse/caption detail panes do when inline rendering is active for
+// the selected image card. Every other frame carries the delete escape that
+// clears a stale image.
 func (m model) showsImage() bool {
-	return m.st == stateImage
+	if m.st == stateImage {
+		return true
+	}
+	if m.opts.ImageRender == "inline" && (m.st == stateBrowse || m.st == stateCaption) {
+		if len(m.cards) > 0 && m.cards[m.sel].Kind == inventory.KindImage {
+			detailW, _, paneH := m.paneDims()
+			return m.imageRenderInline(m.cards[m.sel], detailW, paneH)
+		}
+	}
+	return false
 }
 
 // detailPane picks the left-column content by state.
@@ -91,6 +102,10 @@ func (m model) previewPane(w, h int) string {
 	header := titleStyle.Render(kindLabel(c.Kind)) + "  " +
 		dimStyle.Render(cardLabel(c)) + "  " + dimStyle.Render(relTime(c.Created))
 	if c.Kind == inventory.KindImage {
+		if m.imageRenderInline(c, w, h-2) {
+			// Inline render: the screenshot is the preview.
+			return header + "\n\n" + m.inlineImagePane(c, w, h-2)
+		}
 		return fillPane(header+"\n\n"+imageLabel(c)+"\n\n"+dimStyle.Render("Press Enter to view"), w, h)
 	}
 	// The viewport fills the pane below the header.
@@ -102,6 +117,15 @@ func (m model) previewPane(w, h int) string {
 // in kitty, missing file, not PNG, or too small to fit). Callers fall back
 // to the external viewer when this is 0.
 func (m model) imageRows(c inventory.Card) int {
+	_, _, paneH := m.paneDims()
+	return m.imageRowsInPane(c, m.width, paneH, m.opts.ImageScale)
+}
+
+// imageRowsInPane returns how many terminal rows the image should occupy to
+// fit a w×h pane at the given scale multiplier, or 0 when it can't be
+// rendered in-terminal (not running in kitty, missing file, not PNG, or too
+// small to fit).
+func (m model) imageRowsInPane(c inventory.Card, w, h int, scale float64) int {
 	dbg := os.Getenv("SNAPSHELL_KITTY_DEBUG")
 	logf := func(format string, a ...any) {
 		if dbg != "" {
@@ -109,36 +133,35 @@ func (m model) imageRows(c inventory.Card) int {
 		}
 	}
 	if c.AbsPath == "" {
-		logf("imageRows: AbsPath empty")
+		logf("imageRowsInPane: AbsPath empty")
 		return 0
 	}
 	if !kittyEnabled() {
-		logf("imageRows: kitty disabled (TERM=%q KITTY_WINDOW_ID=%q)", os.Getenv("TERM"), os.Getenv("KITTY_WINDOW_ID"))
+		logf("imageRowsInPane: kitty disabled (TERM=%q KITTY_WINDOW_ID=%q)", os.Getenv("TERM"), os.Getenv("KITTY_WINDOW_ID"))
 		return 0
 	}
 	cfg, format, err := imageDecode(c.AbsPath)
 	if err != nil {
-		logf("imageRows: imageDecode error: %v", err)
+		logf("imageRowsInPane: imageDecode error: %v", err)
 		return 0
 	}
 	if format != "png" {
-		logf("imageRows: format is %q, want png", format)
+		logf("imageRowsInPane: format is %q, want png", format)
 		return 0
 	}
-	_, _, paneH := m.paneDims()
-	rows := kittyFitRows(cfg.Width, cfg.Height, m.width, paneH)
-	if rows > 0 && m.opts.ImageScale < 1 {
+	rows := kittyFitRows(cfg.Width, cfg.Height, w, h)
+	if rows > 0 && scale < 1 {
 		// [inventory].image_scale_percent: render the image proportionally
-		// smaller than the full-pane fit (aspect ratio preserved by kitty
+		// smaller than the pane fit (aspect ratio preserved by kitty
 		// deriving the width from the rows). Too small to fit even one row
 		// falls back to the external viewer.
-		rows = int(float64(rows)*m.opts.ImageScale + 0.5)
+		rows = int(float64(rows)*scale + 0.5)
 		if rows < 1 {
 			rows = 0
 		}
 	}
 	if rows <= 0 {
-		logf("imageRows: kittyFitRows=0 (w=%d h=%d img=%dx%d)", m.width, paneH, cfg.Width, cfg.Height)
+		logf("imageRowsInPane: kittyFitRows=0 (w=%d h=%d img=%dx%d)", w, h, cfg.Width, cfg.Height)
 	}
 	return rows
 }
@@ -179,6 +202,41 @@ func (m model) imageViewPane() string {
 	return strings.Join(lines, "\n")
 }
 
+// imageRenderInline reports whether the [inventory].image_render=inline
+// preview is active and can render the given card in-terminal inside a w×h
+// pane (kitty mode only; the external viewer path is untouched).
+func (m model) imageRenderInline(c inventory.Card, w, h int) bool {
+	return m.opts.ImageRender == "inline" && m.imageMode() == "kitty" && m.inlineImageRows(c, w, h) > 0
+}
+
+// inlineImageRows returns how many terminal rows the inline preview image
+// should occupy in a w×h pane (default half the fit, hard-capped at 65%),
+// or 0 when it can't be rendered in-terminal.
+func (m model) inlineImageRows(c inventory.Card, w, h int) int {
+	return m.imageRowsInPane(c, w, h, m.opts.ImageInlineScale)
+}
+
+// inlineImagePane renders the inline screenshot in the detail pane: the
+// kitty graphics escape on its own line, then blank lines reserving the
+// image's rows, all padded to the pane width so the renderer never erases
+// the placement. Falls back to a plain label when the image can't be
+// rendered in-terminal.
+func (m model) inlineImagePane(c inventory.Card, w, h int) string {
+	rows := m.inlineImageRows(c, w, h)
+	if rows <= 0 {
+		return fillPane(imageLabel(c)+"\n\n"+dimStyle.Render("Press Enter to view"), w, h)
+	}
+	pad := strings.Repeat(" ", w)
+	lines := []string{kittyPadLine(kittyFrameForImage(c.AbsPath, rows), w)}
+	for i := 0; i < rows-1; i++ {
+		lines = append(lines, pad)
+	}
+	for len(lines) < h {
+		lines = append(lines, pad)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // kittyPadLine returns s followed by enough spaces to reach exactly w
 // display cells, so the renderer sees a full-width line and skips its erase
 // sequence.
@@ -197,6 +255,16 @@ func (m model) captionPane(w, h int) string {
 	lines = append(lines, titleStyle.Render("Caption")+"  "+dimStyle.Render(cardLabel(c)))
 	lines = append(lines, m.caption.View())
 	lines = append(lines, "")
+	if m.imageRenderInline(c, w, h) {
+		// Inline render: the screenshot is the preview, so keep it on screen
+		// while captioning instead of swapping in the text preview — there's
+		// nothing meaningful to preview for an image.
+		avail := h - len(lines) - 2 // title, textarea, blank + breathing room
+		if avail < 1 {
+			avail = 1
+		}
+		return fillPane(strings.Join(append(lines, m.inlineImagePane(c, w, avail)), "\n"), w, h)
+	}
 	lines = append(lines, titleStyle.Render("Preview"))
 	lines = append(lines, wrapText(m.captionPreviewText(c), w))
 	return fillPane(strings.Join(lines, "\n"), w, h)

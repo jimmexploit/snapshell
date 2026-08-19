@@ -125,11 +125,17 @@ type KeymapConfig struct {
 // unset or non-positive.
 const DefaultInventoryCloseDelay = 5
 
-// DefaultImageScalePercent is the default [inventory].image_scale_percent:
-// 100 = the image is rendered as large as the pane allows (the classic
-// full-screen fit). Lower values render the image proportionally smaller
-// while keeping its aspect ratio.
+// DefaultImageScalePercent is the default [inventory].image_scale_percent
+// for tab (full-screen) rendering: 100 = the image is rendered as large as
+// the pane allows. Lower values render the image proportionally smaller
+// while keeping its aspect ratio. An unset key means "use the per-mode
+// default" (100 for tab, 50 for inline).
 const DefaultImageScalePercent = 100
+
+// MaxInlineImageScalePercent is the hard cap on the inline preview image
+// size: even an explicit image_scale_percent above this is clamped down, so
+// the in-pane preview can never take over more than ~2/3 of the pane.
+const MaxInlineImageScalePercent = 65
 
 // BlogConfig configures how blog.md entries are laid out.
 type BlogConfig struct {
@@ -154,10 +160,17 @@ type InventoryConfig struct {
 	// ImageViewer. Default "kitty".
 	ImageMode string `toml:"image_mode"`
 	// ImageScalePercent is how large the in-terminal image is rendered as a
-	// percentage of the size that would exactly fit the pane: 100 (default)
-	// = full fit, 50 = half size. The aspect ratio is always preserved. Out
-	// of range values fall back to the default. Ignored in "external" mode.
-	ImageScalePercent int `toml:"image_scale_percent"`
+	// percentage of the size that would exactly fit the pane: 100 (default,
+	// when unset) = full fit, 50 = half size. A *int so an unset key is
+	// distinguishable from an explicit value: the inline preview defaults to
+	// 50% when unset and never exceeds MaxInlineImageScalePercent. Ignored in
+	// "external" mode.
+	ImageScalePercent *int `toml:"image_scale_percent"`
+	// ImageRender chooses where the in-terminal screenshot is shown: "tab"
+	// (default) opens it full-screen on Enter, "inline" renders it directly
+	// in the preview pane for the selected image card (no Enter needed; Enter
+	// still opens the full-screen zoom). Ignored in "external" mode.
+	ImageRender string `toml:"image_render"`
 }
 
 // Default returns the built-in configuration values. SessionRoot is the
@@ -174,7 +187,7 @@ func Default() *Config {
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 		Themes:     ThemesConfig{},
 		Blog:       BlogConfig{CaptionPosition: "above"},
-		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty", ImageScalePercent: DefaultImageScalePercent},
+		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty", ImageRender: "tab"},
 	}
 }
 
@@ -235,17 +248,56 @@ func (c *Config) ImageMode() string {
 	return mode
 }
 
-// ImageScale returns the multiplier for the in-terminal image size, derived
-// from [inventory].image_scale_percent: 1.0 renders the image as large as
-// the pane allows, 0.5 half that, etc. The aspect ratio is always kept. A
-// percent outside the sane 1..100 range (including 0 and negative, i.e. an
-// unset key) resolves to the default 100 (multiplier 1.0).
+// ImageRender returns how the review TUI shows in-terminal screenshots:
+// "tab" opens them full-screen on Enter (default), "inline" renders them in
+// the preview pane for the selected image card. Unknown or empty values
+// resolve to "tab".
+func (c *Config) ImageRender() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Inventory.ImageRender))
+	if mode != "tab" && mode != "inline" {
+		mode = "tab"
+	}
+	return mode
+}
+
+// ImageScale returns the multiplier for the full-screen (tab) image size,
+// derived from [inventory].image_scale_percent: 1.0 renders the image as
+// large as the pane allows, 0.5 half that, etc. The aspect ratio is always
+// kept. An unset key or a percent outside the sane 1..100 range resolves to
+// the default 100 (multiplier 1.0).
 func (c *Config) ImageScale() float64 {
 	pct := c.Inventory.ImageScalePercent
-	if pct < 1 || pct > 100 {
-		pct = DefaultImageScalePercent
+	if pct == nil {
+		return 1
 	}
-	return float64(pct) / 100
+	v := *pct
+	if v < 1 || v > 100 {
+		v = DefaultImageScalePercent
+	}
+	return float64(v) / 100
+}
+
+// ImageScaleInline returns the multiplier for the inline preview image,
+// derived from [inventory].image_scale_percent with inline-specific bounds:
+// an unset key defaults to 50% of the pane fit, an explicit value is used
+// as-is up to MaxInlineImageScalePercent (65%), beyond which it is clamped.
+func (c *Config) ImageScaleInline() float64 {
+	pct := c.Inventory.ImageScalePercent
+	if pct == nil {
+		return 0.5
+	}
+	v := *pct
+	if v < 1 {
+		v = 1
+	}
+	if v > 100 {
+		v = 100
+	}
+	scale := float64(v) / 100
+	if scale > float64(MaxInlineImageScalePercent)/100 {
+		scale = float64(MaxInlineImageScalePercent) / 100
+	}
+	return scale
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -447,10 +499,15 @@ const defaultFileText = `# snapshell configuration
   # full-screen inside the terminal (requires running in kitty; falls back
   # to the external viewer otherwise), "external" opens it in image_viewer.
   image_mode = "kitty"
+  # Where the in-terminal screenshot is shown: "tab" opens it full-screen on
+  # Enter (default), "inline" renders it right in the preview pane for the
+  # selected image card — no Enter needed (Enter still zooms full-screen).
+  image_render = "tab"
   # How large the in-terminal image is rendered, as a percentage of the size
-  # that would exactly fit the pane. 100 = full fit, 50 = half size, etc.
-  # The aspect ratio is always preserved. Ignored in "external" mode.
-  image_scale_percent = 100
+  # that would exactly fit the pane. Tab mode: 100 = full fit when unset.
+  # Inline mode: unset = 50% of the pane fit, and the value never exceeds
+  # 65%. The aspect ratio is always preserved. Ignored in "external" mode.
+  # image_scale_percent = 60
 
 [blog]
   # Where the caption of an image/code entry sits in blog.md relative to
@@ -510,8 +567,13 @@ func fillDefaults(c *Config) {
 	if strings.TrimSpace(c.Inventory.ImageMode) == "" {
 		c.Inventory.ImageMode = def.Inventory.ImageMode
 	}
-	if c.Inventory.ImageScalePercent <= 0 {
-		c.Inventory.ImageScalePercent = def.Inventory.ImageScalePercent
+	if strings.TrimSpace(c.Inventory.ImageRender) == "" {
+		c.Inventory.ImageRender = def.Inventory.ImageRender
+	}
+	// A non-positive explicit image_scale_percent is treated as unset so the
+	// per-mode defaults (tab 100, inline 50) apply.
+	if c.Inventory.ImageScalePercent != nil && *c.Inventory.ImageScalePercent <= 0 {
+		c.Inventory.ImageScalePercent = nil
 	}
 	if strings.TrimSpace(c.Blog.CaptionPosition) == "" {
 		c.Blog.CaptionPosition = def.Blog.CaptionPosition

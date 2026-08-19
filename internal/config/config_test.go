@@ -278,6 +278,76 @@ func TestImageScaleConfig(t *testing.T) {
 	}
 }
 
+func TestImageRenderConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	if cfg := load(""); cfg.ImageRender() != "tab" {
+		t.Fatalf("default ImageRender = %q, want tab", cfg.ImageRender())
+	}
+	for body, want := range map[string]string{
+		"[inventory]\n":                              "tab",
+		"[inventory]\nimage_render = \"tab\"\n":      "tab",
+		"[inventory]\nimage_render = \"inline\"\n":   "inline",
+		"[inventory]\nimage_render = \"INLINE\"\n":   "inline",
+		"[inventory]\nimage_render = \"sideways\"\n": "tab",
+	} {
+		if got := load(body).ImageRender(); got != want {
+			t.Fatalf("ImageRender for %q = %q, want %q", body, got, want)
+		}
+	}
+}
+
+func TestImageScaleInlineConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	// Unset → 50% in inline mode.
+	if cfg := load(""); cfg.ImageScaleInline() != 0.5 {
+		t.Fatalf("default ImageScaleInline = %v, want 0.5", cfg.ImageScaleInline())
+	}
+	// Explicit values are honored up to the 65% cap.
+	for body, want := range map[string]float64{
+		"[inventory]\nimage_scale_percent = 50\n":  0.5,
+		"[inventory]\nimage_scale_percent = 33\n":  0.33,
+		"[inventory]\nimage_scale_percent = 65\n":  0.65,
+		"[inventory]\nimage_scale_percent = 80\n":  0.65,
+		"[inventory]\nimage_scale_percent = 100\n": 0.65,
+	} {
+		if got := load(body).ImageScaleInline(); got != want {
+			t.Fatalf("ImageScaleInline for %q = %v, want %v", body, got, want)
+		}
+	}
+	// Explicit 0 is treated as unset (inline default 50).
+	if cfg := load("[inventory]\nimage_scale_percent = 0\n"); cfg.ImageScaleInline() != 0.5 {
+		t.Fatalf("ImageScaleInline for 0 = %v, want 0.5", cfg.ImageScaleInline())
+	}
+	// The full-screen (tab) scale is unaffected by the inline cap.
+	if cfg := load("[inventory]\nimage_scale_percent = 80\n"); cfg.ImageScale() != 0.8 {
+		t.Fatalf("ImageScale = %v, want 0.8", cfg.ImageScale())
+	}
+}
+
 func TestKeepRatioDefaultOn(t *testing.T) {
 	cfg := loadPopup(t, "width = 560\nheight = 320\n")
 	if !cfg.KeepRatioOn() {
@@ -339,7 +409,7 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_scale_percent = 100"} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}

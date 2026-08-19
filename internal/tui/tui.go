@@ -38,11 +38,13 @@ type ListResult struct {
 
 // Options configures one TUI run.
 type Options struct {
-	Client      Client
-	ImageViewer string        // binary to peek at screenshots; "" = xdg-open
-	CloseDelay  time.Duration // how long an opened image stays up
-	ImageMode   string        // "kitty" (in-terminal) or "external" viewer
-	ImageScale  float64       // in-terminal size multiplier: 1.0 = fit the pane
+	Client           Client
+	ImageViewer      string        // binary to peek at screenshots; "" = xdg-open
+	CloseDelay       time.Duration // how long an opened image stays up
+	ImageMode        string        // "kitty" (in-terminal) or "external" viewer
+	ImageScale       float64       // full-screen (tab) size multiplier: 1.0 = fit the pane
+	ImageRender      string        // "tab" (Enter opens full-screen) or "inline" (preview pane)
+	ImageInlineScale float64       // inline preview size multiplier: 0.5 = half the pane fit
 }
 
 // Run starts the review TUI in the foreground and blocks until the user
@@ -54,6 +56,12 @@ func Run(opts Options) error {
 	}
 	if opts.ImageScale <= 0 {
 		opts.ImageScale = 1
+	}
+	if opts.ImageInlineScale <= 0 {
+		opts.ImageInlineScale = 0.5
+	}
+	if opts.ImageRender != "inline" {
+		opts.ImageRender = "tab"
 	}
 	p := tea.NewProgram(newModel(opts), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -132,6 +140,12 @@ type model struct {
 func newModel(opts Options) model {
 	if opts.ImageScale <= 0 {
 		opts.ImageScale = 1
+	}
+	if opts.ImageInlineScale <= 0 {
+		opts.ImageInlineScale = 0.5
+	}
+	if opts.ImageRender != "inline" {
+		opts.ImageRender = "tab"
 	}
 	caption := textarea.New()
 	caption.Placeholder = "Caption (optional) — Ctrl+S appends, Esc cancels"

@@ -59,11 +59,17 @@ image_viewer = ""           # binary for peeking at screenshots ("feh", ...)
                             # "" = xdg-open
 close_delay_secs = 5        # seconds an opened image stays up before
                             # best-effort close (0 = 5)
-image_mode = "kitty"        # "kitty" = render in-terminal (full-screen,
-                            # falls back to external), "external" = viewer
-image_scale_percent = 100   # in-terminal image size as % of the full-pane
-                            # fit: 100 = fit, 50 = half; aspect kept;
-                            # out of 1..100 resolves to 100; external ignores
+ image_mode = "kitty"        # "kitty" = render in-terminal (full-screen,
+                             # falls back to external), "external" = viewer
+ image_render = "tab"        # "tab" = in-terminal screenshot opens full-screen
+                             # on Enter (default); "inline" = rendered right
+                             # in the preview pane for the selected image
+                             # card, no Enter needed (Enter still zooms)
+ image_scale_percent = 60    # in-terminal image size as % of the pane fit.
+                             # A *int: UNSET = per-mode default (tab 100,
+                             # inline 50) and inline is hard-capped at 65%;
+                             # explicit values are clamped to 1..100 and
+                             # inline never exceeds 65. External ignores.
 ```
 
 ## Behavior
