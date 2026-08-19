@@ -42,7 +42,7 @@ func (m model) View() string {
 		return kittyFrameNoImage() + m.renderPane() + "\n" + m.footer()
 	}
 	if m.st == stateImage {
-		return m.imageViewPane() + "\n" + m.footer()
+		return kittyFrameNoImage() + m.imageViewPane() + "\n" + m.footer()
 	}
 	if m.st == stateNote {
 		return kittyFrameNoImage() + m.notePane() + "\n" + m.footer()
@@ -50,18 +50,20 @@ func (m model) View() string {
 	detailW, listW, paneH := m.paneDims()
 	detail := m.detailPane(detailW, paneH)
 	list := m.listPane(listW, paneH)
-	prefix := ""
-	if !m.showsImage() {
-		prefix = kittyFrameNoImage()
-	}
-	return prefix + lipgloss.JoinHorizontal(lipgloss.Top, detail, list) + "\n" + m.footer()
+	// The delete escape always leads the frame — even when this frame shows
+	// an image — so a screenshot from a previous state (e.g. the blog render,
+	// which can place several at once) can never linger. Every frame that
+	// shows an image re-transmits it (kittyFrameForImage / inlineImagePane),
+	// so the delete-then-replace within one frame is invisible.
+	return kittyFrameNoImage() + lipgloss.JoinHorizontal(lipgloss.Top, detail, list) + "\n" + m.footer()
 }
 
 // showsImage reports whether the current view displays a screenshot via the
 // kitty graphics protocol: the full-screen stateImage view always does, and
 // the browse/caption detail panes do when inline rendering is active for
-// the selected image card. Every other frame carries the delete escape that
-// clears a stale image.
+// the selected image card. It is informational — the frame always leads with
+// the delete escape regardless, and image-showing panes re-transmit on every
+// frame.
 func (m model) showsImage() bool {
 	if m.st == stateImage {
 		return true

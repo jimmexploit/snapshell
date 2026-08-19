@@ -64,6 +64,7 @@ func runTUI() error {
 		ImageScale:       cfg.ImageScale(),
 		ImageRender:      cfg.ImageRender(),
 		ImageInlineScale: cfg.ImageScaleInline(),
+		BlogImageScale:   cfg.BlogImageScale(),
 	})
 }
 

@@ -132,6 +132,12 @@ const DefaultInventoryCloseDelay = 5
 // default" (100 for tab, 50 for inline).
 const DefaultImageScalePercent = 100
 
+// DefaultBlogImageScalePercent is the default
+// [inventory].blog_image_scale_percent for the blog render view: 100 = each
+// screenshot is rendered as large as the render pane allows. An unset key
+// means 100.
+const DefaultBlogImageScalePercent = 100
+
 // MaxInlineImageScalePercent is the hard cap on the inline preview image
 // size: even an explicit image_scale_percent above this is clamped down, so
 // the in-pane preview can never take over more than ~2/3 of the pane.
@@ -171,6 +177,13 @@ type InventoryConfig struct {
 	// in the preview pane for the selected image card (no Enter needed; Enter
 	// still opens the full-screen zoom). Ignored in "external" mode.
 	ImageRender string `toml:"image_render"`
+	// BlogImageScalePercent is how large the screenshots embedded in the
+	// "view blog" render are drawn, as a percentage of the size that would
+	// exactly fit the render pane: 100 (default, when unset) = full fit, 50
+	// = half size. Distinct from ImageScalePercent, which governs the
+	// inventory image card previews. A *int so an unset key is
+	// distinguishable from an explicit value.
+	BlogImageScalePercent *int `toml:"blog_image_scale_percent"`
 }
 
 // Default returns the built-in configuration values. SessionRoot is the
@@ -298,6 +311,23 @@ func (c *Config) ImageScaleInline() float64 {
 		scale = float64(MaxInlineImageScalePercent) / 100
 	}
 	return scale
+}
+
+// BlogImageScale returns the multiplier for the screenshots in the "view
+// blog" render, derived from [inventory].blog_image_scale_percent: 1.0
+// renders each image as large as the render pane allows, 0.5 half that, etc.
+// The aspect ratio is always kept. An unset key or a percent outside the
+// sane 1..100 range resolves to the default 100 (multiplier 1.0).
+func (c *Config) BlogImageScale() float64 {
+	pct := c.Inventory.BlogImageScalePercent
+	if pct == nil {
+		return 1
+	}
+	v := *pct
+	if v < 1 || v > 100 {
+		v = DefaultBlogImageScalePercent
+	}
+	return float64(v) / 100
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -508,6 +538,11 @@ const defaultFileText = `# snapshell configuration
   # Inline mode: unset = 50% of the pane fit, and the value never exceeds
   # 65%. The aspect ratio is always preserved. Ignored in "external" mode.
   # image_scale_percent = 60
+  # How large the screenshots embedded in the "view blog" render are drawn,
+  # as a percentage of the size that would exactly fit the render pane.
+  # 100 = full fit when unset (default). Distinct from image_scale_percent,
+  # which controls the inventory image card previews.
+  # blog_image_scale_percent = 100
 
 [blog]
   # Where the caption of an image/code entry sits in blog.md relative to
@@ -574,6 +609,11 @@ func fillDefaults(c *Config) {
 	// per-mode defaults (tab 100, inline 50) apply.
 	if c.Inventory.ImageScalePercent != nil && *c.Inventory.ImageScalePercent <= 0 {
 		c.Inventory.ImageScalePercent = nil
+	}
+	// Same for blog_image_scale_percent: a non-positive explicit value means
+	// "use the default" (100).
+	if c.Inventory.BlogImageScalePercent != nil && *c.Inventory.BlogImageScalePercent <= 0 {
+		c.Inventory.BlogImageScalePercent = nil
 	}
 	if strings.TrimSpace(c.Blog.CaptionPosition) == "" {
 		c.Blog.CaptionPosition = def.Blog.CaptionPosition

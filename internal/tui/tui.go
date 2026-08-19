@@ -47,6 +47,7 @@ type Options struct {
 	ImageScale       float64       // full-screen (tab) size multiplier: 1.0 = fit the pane
 	ImageRender      string        // "tab" (Enter opens full-screen) or "inline" (preview pane)
 	ImageInlineScale float64       // inline preview size multiplier: 0.5 = half the pane fit
+	BlogImageScale   float64       // "view blog" screenshot size multiplier: 1.0 = fit the render pane
 }
 
 // Run starts the review TUI in the foreground and blocks until the user
@@ -61,6 +62,9 @@ func Run(opts Options) error {
 	}
 	if opts.ImageInlineScale <= 0 {
 		opts.ImageInlineScale = 0.5
+	}
+	if opts.BlogImageScale <= 0 {
+		opts.BlogImageScale = 1
 	}
 	if opts.ImageRender != "inline" {
 		opts.ImageRender = "tab"
@@ -151,6 +155,9 @@ func newModel(opts Options) model {
 	}
 	if opts.ImageInlineScale <= 0 {
 		opts.ImageInlineScale = 0.5
+	}
+	if opts.BlogImageScale <= 0 {
+		opts.BlogImageScale = 1
 	}
 	if opts.ImageRender != "inline" {
 		opts.ImageRender = "tab"
@@ -356,13 +363,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		changed := msg.content != m.renderContent
 		m.renderContent = msg.content
 		if changed || msg.width != m.renderWidth {
-			content := msg.content
-			if m.renderer != nil {
-				if out, err := m.renderer.Render(content); err == nil {
-					content = out
-				}
-			}
-			m.renderVP.SetContent(content)
+			m.renderVP.SetContent(m.composeRender(msg.content, msg.width))
 			m.renderVP.GotoTop()
 		}
 		return m, nil

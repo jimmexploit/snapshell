@@ -348,6 +348,43 @@ func TestImageScaleInlineConfig(t *testing.T) {
 	}
 }
 
+func TestBlogImageScaleConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	// Default is a full-pane fit (multiplier 1.0), and it is independent of
+	// image_scale_percent.
+	if cfg := load(""); cfg.BlogImageScale() != 1.0 {
+		t.Fatalf("default BlogImageScale = %v, want 1.0", cfg.BlogImageScale())
+	}
+	if cfg := load("[inventory]\nblog_image_scale_percent = 60\n"); cfg.BlogImageScale() != 0.6 {
+		t.Fatalf("60%% blog scale = %v, want 0.6", cfg.BlogImageScale())
+	}
+	if cfg := load("[inventory]\nblog_image_scale_percent = 50\n"); cfg.BlogImageScale() != 0.5 {
+		t.Fatalf("50%% blog scale = %v, want 0.5", cfg.BlogImageScale())
+	}
+	// image_scale_percent must not leak into the blog scale.
+	if cfg := load("[inventory]\nimage_scale_percent = 50\n"); cfg.BlogImageScale() != 1.0 {
+		t.Fatalf("image_scale_percent must not affect BlogImageScale, got %v", cfg.BlogImageScale())
+	}
+	// Out-of-range (0, negative, >100) resolves to the default.
+	for _, v := range []string{"0", "-20", "150"} {
+		if cfg := load("[inventory]\nblog_image_scale_percent = " + v + "\n"); cfg.BlogImageScale() != 1.0 {
+			t.Fatalf("blog scale %s should clamp to 1.0, got %v", v, cfg.BlogImageScale())
+		}
+	}
+}
+
 func TestKeepRatioDefaultOn(t *testing.T) {
 	cfg := loadPopup(t, "width = 560\nheight = 320\n")
 	if !cfg.KeepRatioOn() {
@@ -409,7 +446,7 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60"} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}

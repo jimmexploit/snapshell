@@ -47,6 +47,15 @@ func kittyFitRows(imgW, imgH, paneW, paneH int) int {
 // survives any connection, matching what `kitten icat` does by default.
 // q=2 suppresses every response so the TUI's stdin stays clean.
 func buildKittyEscape(path string, rows int) (string, error) {
+	return buildKittyEscapeID(path, rows, 1)
+}
+
+// buildKittyEscapeID is buildKittyEscape with an explicit image id; id == 0
+// omits the i= field so kitty auto-assigns a fresh id per transmit. The
+// inventory preview always reuses id 1 (one image on screen at a time); the
+// blog render leaves it unset so several screenshots can be on screen at
+// once without clobbering each other's data.
+func buildKittyEscapeID(path string, rows int, id uint32) (string, error) {
 	if _, err := os.Stat(path); err != nil {
 		return "", err
 	}
@@ -58,7 +67,11 @@ func buildKittyEscape(path string, rows int) (string, error) {
 	if encoded == "" {
 		return "", fmt.Errorf("empty path: %s", path)
 	}
-	return fmt.Sprintf("\x1b_Ga=T,f=100,t=f,q=2,i=1,r=%d,C=1;%s\x1b\\", rows, encoded), nil
+	idPart := ""
+	if id > 0 {
+		idPart = fmt.Sprintf("i=%d,", id)
+	}
+	return fmt.Sprintf("\x1b_Ga=T,f=100,t=f,q=2,%sr=%d,C=1;%s\x1b\\", idPart, rows, encoded), nil
 }
 
 // imgMemo caches the fully-built escape for a (path, rows) pair so a screen
@@ -77,6 +90,26 @@ func kittyImageEscape(path string, rows int) (string, error) {
 		return imgMemo.ansi, nil
 	}
 	ansi, err := buildKittyEscape(path, rows)
+	if err != nil {
+		return "", err
+	}
+	imgMemo.key = key
+	imgMemo.ansi = ansi
+	return ansi, nil
+}
+
+// kittyBlogEscape builds the escape for one blog screenshot with no explicit
+// image id, so kitty assigns a fresh one per transmit (the blog page can
+// show several screenshots at once, unlike the single inventory preview).
+// The "b@" memo prefix keeps it distinct from the i=1 inventory escapes.
+func kittyBlogEscape(path string, rows int) (string, error) {
+	key := "b@" + path + "@" + strconv.Itoa(rows)
+	imgMemo.mu.Lock()
+	defer imgMemo.mu.Unlock()
+	if imgMemo.key == key {
+		return imgMemo.ansi, nil
+	}
+	ansi, err := buildKittyEscapeID(path, rows, 0)
 	if err != nil {
 		return "", err
 	}

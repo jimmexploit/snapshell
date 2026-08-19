@@ -70,6 +70,11 @@ close_delay_secs = 5        # seconds an opened image stays up before
                              # inline 50) and inline is hard-capped at 65%;
                              # explicit values are clamped to 1..100 and
                              # inline never exceeds 65. External ignores.
+ blog_image_scale_percent = 100 # how large screenshots embedded in the
+                             # "view blog" render are drawn, as % of the pane
+                             # fit (100 = full fit when unset; distinct from
+                             # image_scale_percent, which governs the image
+                             # card previews). Explicit values clamp to 1..100.
 ```
 
 ## Behavior

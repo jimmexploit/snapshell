@@ -571,6 +571,11 @@ func TestInlineRenderShowsImageInPreview(t *testing.T) {
 	if !m.showsImage() {
 		t.Fatal("inline browse with an image selected should report showsImage")
 	}
+	// The frame still leads with the delete escape so images placed by other
+	// states (e.g. the blog render) can't linger over the inline preview.
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,d=A,q=2\x1b\\") {
+		t.Fatalf("inline browse should still delete stale images:\n%q", view)
+	}
 
 	// Captioning the image keeps the image on screen — no text preview.
 	m, _ = upd(t, m, key("c"))
