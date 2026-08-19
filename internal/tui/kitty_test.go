@@ -146,12 +146,15 @@ func TestKittyFrameStateMachine(t *testing.T) {
 	if again := kittyFrameForImage(path, 10); again != first {
 		t.Fatal("unchanged image should re-transmit the same escape")
 	}
-	// Leaving the image → delete escape (once).
-	if del := kittyFrameNoImage(); del != "\x1b_Ga=d,q=2\x1b\\" {
+	// Leaving the image → delete escape (emitted on every no-image frame, so
+	// a stale placement can never linger even if our bookkeeping and kitty's
+	// actual display ever drift apart).
+	del := kittyFrameNoImage()
+	if del != "\x1b_Ga=d,d=A,q=2\x1b\\" {
 		t.Fatalf("delete escape = %q", del)
 	}
-	if again := kittyFrameNoImage(); again != "" {
-		t.Fatal("second no-image frame should not re-delete")
+	if again := kittyFrameNoImage(); again != del {
+		t.Fatal("no-image frames should always carry the delete escape")
 	}
 	// Coming back re-transmits (memoized build is a no-op but the frame
 	// must emit).
@@ -161,6 +164,8 @@ func TestKittyFrameStateMachine(t *testing.T) {
 }
 
 func TestKittyFrameDisabled(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "xterm-256color")
 	defer resetKittyState()
 	// No kitty env: helpers return "" and never mutate state.
 	if got := kittyFrameForImage("/whatever.png", 3); got != "" {

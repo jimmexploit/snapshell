@@ -258,12 +258,15 @@ func (m model) captionPane(w, h int) string {
 	if m.imageRenderInline(c, w, h) {
 		// Inline render: the screenshot is the preview, so keep it on screen
 		// while captioning instead of swapping in the text preview — there's
-		// nothing meaningful to preview for an image.
-		avail := h - len(lines) - 2 // title, textarea, blank + breathing room
+		// nothing meaningful to preview for an image. The label stays so the
+		// user understands this area is the live preview.
+		lines = append(lines, titleStyle.Render("Preview"))
+		avail := h - len(lines) - 1 // title, textarea, blank, label + breathing room
 		if avail < 1 {
 			avail = 1
 		}
-		return fillPane(strings.Join(append(lines, m.inlineImagePane(c, w, avail)), "\n"), w, h)
+		lines = append(lines, m.inlineImagePane(c, w, avail))
+		return fillPane(strings.Join(lines, "\n"), w, h)
 	}
 	lines = append(lines, titleStyle.Render("Preview"))
 	lines = append(lines, wrapText(m.captionPreviewText(c), w))

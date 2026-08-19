@@ -123,20 +123,22 @@ func kittyFrameForImage(path string, rows int) string {
 	return ansi
 }
 
-// kittyFrameNoImage returns the escape that clears the previously displayed
-// image, or "" when nothing is on screen. Call it on any frame that does not
-// display an image so a stale screenshot can't linger over other panes.
+// kittyFrameNoImage returns the escape that clears any image kitty is
+// displaying, or "" when not running in kitty. Call it on every frame that
+// does not display an image so a stale screenshot can't linger over other
+// panes. The delete is emitted unconditionally (not gated on our own
+// bookkeeping of what we last transmitted) with the explicit d=A form so a
+// stale placement is cleared even if our transmit/display state ever falls
+// out of sync with kitty's actual display; deleting when nothing is shown is
+// a no-op.
 func kittyFrameNoImage() string {
 	if !kittyEnabled() {
 		return ""
 	}
 	imgScreen.mu.Lock()
 	defer imgScreen.mu.Unlock()
-	if imgScreen.key == "" {
-		return ""
-	}
 	imgScreen.key = ""
-	return "\x1b_Ga=d,q=2\x1b\\"
+	return "\x1b_Ga=d,d=A,q=2\x1b\\"
 }
 
 // resetKittyState clears the display/memo state (tests only).

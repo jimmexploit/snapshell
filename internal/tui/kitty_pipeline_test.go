@@ -46,8 +46,8 @@ func TestKittyEscapeThroughRealRenderer(t *testing.T) {
 		lmsg := m2.refreshList()()
 		m3, _ := upd(t, m2, lmsg)
 		m4, _ := upd(t, m3, tea.KeyMsg{Type: tea.KeyDown})
-		if view := m4.View(); bytes.Contains([]byte(view), []byte("\x1b_G")) {
-			t.Fatalf("browse view should not emit a kitty escape:\n%q", view)
+		if view := m4.View(); bytes.Contains([]byte(view), []byte("\x1b_Ga=T")) {
+			t.Fatalf("browse view should not transmit the image inline in tab mode:\n%q", view)
 		}
 		m5, _ := upd(t, m4, tea.KeyMsg{Type: tea.KeyEnter})
 		if m5.st != stateImage {
@@ -119,7 +119,7 @@ func truncated(b []byte, n int) string {
 // data intact: well-formed control data, ST-terminated, no newlines inside.
 func checkEscape(t *testing.T, data []byte, label string) {
 	t.Helper()
-	firstG := bytes.Index(data, []byte("\x1b_G"))
+	firstG := bytes.Index(data, []byte("\x1b_Ga=T"))
 	if firstG < 0 {
 		t.Fatalf("%s: no graphics escape emitted", label)
 	}

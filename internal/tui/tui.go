@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	bubbleskey "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -153,6 +154,7 @@ func newModel(opts Options) model {
 	caption.Prompt = ""
 	caption.SetWidth(40)
 	caption.SetHeight(4)
+	bindWordKeys(&caption.KeyMap)
 
 	note := textarea.New()
 	note.Placeholder = "Write your note here…  Ctrl+S appends, Esc cancels"
@@ -160,6 +162,7 @@ func newModel(opts Options) model {
 	note.Prompt = ""
 	note.SetWidth(40)
 	note.SetHeight(4)
+	bindWordKeys(&note.KeyMap)
 
 	return model{
 		opts:     opts,
@@ -168,6 +171,22 @@ func newModel(opts Options) model {
 		detailVP: viewport.New(40, 8),
 		renderVP: viewport.New(40, 8),
 	}
+}
+
+// bindWordKeys extends the textarea keymap with ctrl+left/right as
+// word-by-word movement, in addition to the bubbles defaults (alt+left/right
+// and alt+b/alt+f). bubbletea maps the CSI sequences kitty and other
+// terminals send for ctrl+arrow (e.g. \x1b[1;5D) to the ctrl+left/ctrl+right
+// keys.
+func bindWordKeys(km *textarea.KeyMap) {
+	km.WordBackward = bubbleskey.NewBinding(
+		bubbleskey.WithKeys("alt+left", "alt+b", "ctrl+left"),
+		bubbleskey.WithHelp("alt+left / ctrl+left", "word backward"),
+	)
+	km.WordForward = bubbleskey.NewBinding(
+		bubbleskey.WithKeys("alt+right", "alt+f", "ctrl+right"),
+		bubbleskey.WithHelp("alt+right / ctrl+right", "word forward"),
+	)
 }
 
 // Init primes the UI with the current queue and starts polling.

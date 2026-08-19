@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	bubbleskey "github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -509,8 +510,41 @@ func TestViewEmitsImageThenDelete(t *testing.T) {
 	if m.st != stateBrowse {
 		t.Fatalf("expected stateBrowse after Esc, got %d", m.st)
 	}
-	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,q=2\x1b\\") {
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,d=A,q=2\x1b\\") {
 		t.Fatalf("non-image frame should delete the image:\n%q", view)
+	}
+}
+
+func TestNonImageFrameAlwaysCarriesDelete(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	defer resetKittyState()
+
+	imgPath := filepath.Join(t.TempDir(), "attachments", "001.png")
+	writePNG(t, imgPath, 100, 80)
+
+	cards := []inventory.Card{
+		{ID: 1, Kind: inventory.KindImage, Path: "attachments/001.png", AbsPath: imgPath, Created: time.Now()},
+	}
+	m, _ := setupModel(t, cards)
+	m.opts.ImageRender = "inline"
+	m = step(t, m, m.refreshList())
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// Even before any image was ever transmitted, the render view must carry
+	// the delete so a stale placement can never linger over the render text.
+	m.st = stateRender
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,d=A,q=2\x1b\\") {
+		t.Fatalf("render view should always carry the delete escape:\n%q", view)
+	}
+
+	// After actually hovering the image inline, entering render still clears.
+	m.st = stateBrowse
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=T,f=100") {
+		t.Fatalf("browse should transmit the inline image:\n%q", view)
+	}
+	m.st = stateRender
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,d=A,q=2\x1b\\") {
+		t.Fatalf("render after hovering the image should delete it:\n%q", view)
 	}
 }
 
@@ -546,14 +580,17 @@ func TestInlineRenderShowsImageInPreview(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "\x1b_Ga=T,f=100") {
 		t.Fatalf("inline caption should keep the image on screen:\n%q", view)
 	}
-	if view := m.View(); strings.Contains(view, "Preview") {
+	if view := m.View(); !strings.Contains(view, "Preview") {
+		t.Fatalf("inline caption should keep the Preview label:\n%q", view)
+	}
+	if view := m.View(); strings.Contains(view, "![](") {
 		t.Fatalf("inline caption should skip the text preview for images:\n%q", view)
 	}
 
 	// Esc back to browse, move to the code card: the image must be deleted.
 	m, _ = upd(t, m, key("esc"))
 	m, _ = upd(t, m, key("down"))
-	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,q=2\x1b\\") {
+	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,d=A,q=2\x1b\\") {
 		t.Fatalf("selecting a code card should delete the inline image:\n%q", view)
 	}
 	if m.showsImage() {
@@ -594,6 +631,31 @@ func TestInlineImageRowsScale(t *testing.T) {
 	m.opts.ImageInlineScale = 0.5
 	if m.showsImage() {
 		t.Fatal("tab mode should not report showsImage in browse")
+	}
+}
+
+func TestCtrlArrowWordMovement(t *testing.T) {
+	cards := []inventory.Card{
+		{ID: 1, Kind: inventory.KindCode, Text: "whoami", Created: time.Now()},
+	}
+	m, _ := setupModel(t, cards)
+	m = step(t, m, m.refreshList())
+
+	// The caption and note textareas must map ctrl+left/right to word
+	// movement, not just the bubbles alt+arrow defaults.
+	left := tea.KeyMsg(tea.Key{Type: tea.KeyCtrlLeft})
+	if !bubbleskey.Matches(left, m.caption.KeyMap.WordBackward) {
+		t.Fatal("ctrl+left should move the caption cursor backward by word")
+	}
+	if !bubbleskey.Matches(left, m.note.KeyMap.WordBackward) {
+		t.Fatal("ctrl+left should move the note cursor backward by word")
+	}
+	right := tea.KeyMsg(tea.Key{Type: tea.KeyCtrlRight})
+	if !bubbleskey.Matches(right, m.caption.KeyMap.WordForward) {
+		t.Fatal("ctrl+right should move the caption cursor forward by word")
+	}
+	if !bubbleskey.Matches(right, m.note.KeyMap.WordForward) {
+		t.Fatal("ctrl+right should move the note cursor forward by word")
 	}
 }
 
