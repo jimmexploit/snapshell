@@ -50,6 +50,7 @@ type Options struct {
 	BlogImageScale   float64       // "view blog" screenshot size multiplier: 1.0 = fit the render pane
 	BlogImageAlign   string        // "view blog" screenshot horizontal position: "left", "center", "right"
 	BlogImagePadding int           // edge gap in cells for left/right blog alignment (0 = flush)
+	Keys             Keys          // key bindings; zero value = DefaultKeys
 }
 
 // Run starts the review TUI in the foreground and blocks until the user
@@ -73,6 +74,9 @@ func Run(opts Options) error {
 	}
 	if opts.ImageRender != "inline" {
 		opts.ImageRender = "tab"
+	}
+	if opts.Keys.Quit == nil {
+		opts.Keys = DefaultKeys()
 	}
 	// Measure the terminal's real cell ratio (kitty CSI 16 t) before bubbletea
 	// owns stdin, so centered/right-aligned blog screenshots place exactly.
@@ -125,6 +129,7 @@ const (
 
 type model struct {
 	opts Options
+	keys Keys
 
 	width, height int
 	dir           string
@@ -174,6 +179,9 @@ func newModel(opts Options) model {
 	if opts.ImageRender != "inline" {
 		opts.ImageRender = "tab"
 	}
+	if opts.Keys.Quit == nil {
+		opts.Keys = DefaultKeys()
+	}
 	caption := textarea.New()
 	caption.Placeholder = "Caption (optional) — Ctrl+S appends, Esc cancels"
 	caption.ShowLineNumbers = false
@@ -192,6 +200,7 @@ func newModel(opts Options) model {
 
 	return model{
 		opts:     opts,
+		keys:     opts.Keys,
 		caption:  caption,
 		note:     note,
 		detailVP: viewport.New(40, 8),

@@ -317,6 +317,95 @@ func TestQuitKeys(t *testing.T) {
 	}
 }
 
+// TestCustomKeyBindings verifies the [keymaps.inventory] bindings drive the
+// TUI: rebound actions fire on the new key, the old default keys go inert,
+// and ctrl+c keeps quitting in every state even when Quit was rebound.
+func TestCustomKeyBindings(t *testing.T) {
+	m, client := setupModel(t, testCards())
+	m.keys = Keys{
+		Up:       []string{"x"},
+		Down:     []string{"down"},
+		Note:     []string{"m"},
+		Blog:     []string{"b"},
+		Submit:   []string{"ctrl+s"},
+		Cancel:   []string{"esc"},
+		Confirm:  []string{"y"},
+		Decline:  []string{"n"},
+		PageUp:   []string{"pgup"},
+		PageDown: []string{"pgdown"},
+		Append:   []string{"a"},
+		Caption:  []string{"c"},
+		Discard:  []string{"d"},
+		Open:     []string{"enter"},
+		Quit:     []string{"q"},
+	}
+	m = step(t, m, m.refreshList())
+	if m.sel != 0 {
+		t.Fatalf("sel = %d, want 0", m.sel)
+	}
+
+	// Default keys that were rebound away are now inert in the browse list.
+	for _, k := range []string{"k", "j", "n", "v"} {
+		after, _ := upd(t, m, key(k))
+		if after.sel != m.sel || after.st != m.st {
+			t.Fatalf("key %q should be inert with custom bindings, got sel %d st %d", k, after.sel, after.st)
+		}
+	}
+
+	// Custom Up/Down navigate; "k" (the old default Up) does not.
+	m, _ = upd(t, m, key("k"))
+	if m.sel != 0 {
+		t.Fatalf("k should be inert, sel = %d", m.sel)
+	}
+	m, _ = upd(t, m, key("x"))
+	if m.sel != 0 {
+		t.Fatalf("x (up) from index 0 must clamp, sel = %d", m.sel)
+	}
+	m, _ = upd(t, m, key("down"))
+	if m.sel != 1 {
+		t.Fatalf("down -> sel %d, want 1", m.sel)
+	}
+	m, _ = upd(t, m, key("x"))
+	if m.sel != 0 {
+		t.Fatalf("x (up) -> sel %d, want 0", m.sel)
+	}
+
+	// Custom Note opens the editor; Esc (Cancel) backs out.
+	m, _ = upd(t, m, key("m"))
+	if m.st != stateNote {
+		t.Fatalf("m should open the note editor, st = %d", m.st)
+	}
+	m, _ = upd(t, m, key("esc"))
+	if m.st != stateBrowse {
+		t.Fatalf("esc should cancel the note, st = %d", m.st)
+	}
+
+	// Custom Blog toggles the render view and back.
+	m, cmd := upd(t, m, key("b"))
+	if m.st != stateRender {
+		t.Fatalf("b should open the render view, st = %d", m.st)
+	}
+	if cmd == nil {
+		t.Fatal("b should trigger a blog.md refresh")
+	}
+	if m, _ = upd(t, m, key("b")); m.st != stateBrowse {
+		t.Fatalf("b should return to the list, st = %d", m.st)
+	}
+
+	// Custom Quit fires; ctrl+c still quits even though Quit dropped it.
+	if _, cmd := upd(t, m, key("q")); cmd == nil {
+		t.Fatal("q should quit")
+	}
+	if _, cmd := upd(t, m, key("ctrl+c")); cmd == nil {
+		t.Fatal("ctrl+c should always quit")
+	}
+
+	// No mutations were ever issued.
+	if len(client.commit) != 0 || len(client.discard) != 0 || len(client.notes) != 0 {
+		t.Fatalf("no mutations expected, commits=%v discarded=%v notes=%v", client.commit, client.discard, client.notes)
+	}
+}
+
 func TestEnterOnImageReturnsCmdEnterOnCodeIsNoop(t *testing.T) {
 	m, _ := setupModel(t, testCards())
 	m = step(t, m, m.refreshList())

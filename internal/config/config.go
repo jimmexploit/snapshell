@@ -118,7 +118,52 @@ type KeymapConfig struct {
 	// Reload re-reads the config file (and re-grabs hotkeys) without
 	// restarting the daemon.
 	Reload string `toml:"reload"`
+	// Inventory keys for the review TUI ('snapshell inventory').
+	Inventory InventoryKeymapConfig `toml:"inventory"`
 }
+
+// InventoryKeymapConfig configures the keys of the review TUI. Each value is
+// a comma-separated list of key names exactly as the terminal reports them,
+// e.g. "q", "ctrl+c", "up", "k", "enter", "esc", "pgup", "y", "Y". Empty =
+// the default for that action. ctrl+c is always the quit/interrupt key while
+// typing a caption or note (it cannot be rebound), because text input must
+// never swallow a letter that is also bound to an action.
+type InventoryKeymapConfig struct {
+	Quit     string `toml:"quit"`
+	Up       string `toml:"up"`
+	Down     string `toml:"down"`
+	PageUp   string `toml:"page_up"`
+	PageDown string `toml:"page_down"`
+	Append   string `toml:"append"`
+	Caption  string `toml:"caption"`
+	Discard  string `toml:"discard"`
+	Note     string `toml:"note"`
+	Blog     string `toml:"blog"`
+	Open     string `toml:"open"`
+	Submit   string `toml:"submit"`
+	Cancel   string `toml:"cancel"`
+	Confirm  string `toml:"confirm"`
+	Decline  string `toml:"decline"`
+}
+
+// Default inventory-TUI key bindings. Values are comma-separated key names.
+const (
+	InventoryQuitDefault     = "q, ctrl+c"
+	InventoryUpDefault       = "up, k"
+	InventoryDownDefault     = "down, j"
+	InventoryPageUpDefault   = "pgup"
+	InventoryPageDownDefault = "pgdown"
+	InventoryAppendDefault   = "a"
+	InventoryCaptionDefault  = "c"
+	InventoryDiscardDefault  = "d"
+	InventoryNoteDefault     = "n"
+	InventoryBlogDefault     = "v"
+	InventoryOpenDefault     = "enter"
+	InventorySubmitDefault   = "ctrl+s"
+	InventoryCancelDefault   = "esc"
+	InventoryConfirmDefault  = "y, Y"
+	InventoryDeclineDefault  = "n, N"
+)
 
 // DefaultInventoryCloseDelay is how long the review TUI leaves an image open
 // in the external viewer before trying to close it, when close_delay_secs is
@@ -201,6 +246,92 @@ type InventoryConfig struct {
 	BlogImagePadding *int `toml:"blog_image_padding"`
 }
 
+// defaultInventoryKeymap returns the built-in review-TUI key bindings.
+func defaultInventoryKeymap() InventoryKeymapConfig {
+	return InventoryKeymapConfig{
+		Quit:     InventoryQuitDefault,
+		Up:       InventoryUpDefault,
+		Down:     InventoryDownDefault,
+		PageUp:   InventoryPageUpDefault,
+		PageDown: InventoryPageDownDefault,
+		Append:   InventoryAppendDefault,
+		Caption:  InventoryCaptionDefault,
+		Discard:  InventoryDiscardDefault,
+		Note:     InventoryNoteDefault,
+		Blog:     InventoryBlogDefault,
+		Open:     InventoryOpenDefault,
+		Submit:   InventorySubmitDefault,
+		Cancel:   InventoryCancelDefault,
+		Confirm:  InventoryConfirmDefault,
+		Decline:  InventoryDeclineDefault,
+	}
+}
+
+// InventoryKeys returns the review-TUI key bindings with defaults filled in
+// for any action left empty (partial configs are fine, like everywhere else).
+func (c *Config) InventoryKeys() InventoryKeymapConfig {
+	def := defaultInventoryKeymap()
+	k := c.Keymaps.Inventory
+	if strings.TrimSpace(k.Quit) == "" {
+		k.Quit = def.Quit
+	}
+	if strings.TrimSpace(k.Up) == "" {
+		k.Up = def.Up
+	}
+	if strings.TrimSpace(k.Down) == "" {
+		k.Down = def.Down
+	}
+	if strings.TrimSpace(k.PageUp) == "" {
+		k.PageUp = def.PageUp
+	}
+	if strings.TrimSpace(k.PageDown) == "" {
+		k.PageDown = def.PageDown
+	}
+	if strings.TrimSpace(k.Append) == "" {
+		k.Append = def.Append
+	}
+	if strings.TrimSpace(k.Caption) == "" {
+		k.Caption = def.Caption
+	}
+	if strings.TrimSpace(k.Discard) == "" {
+		k.Discard = def.Discard
+	}
+	if strings.TrimSpace(k.Note) == "" {
+		k.Note = def.Note
+	}
+	if strings.TrimSpace(k.Blog) == "" {
+		k.Blog = def.Blog
+	}
+	if strings.TrimSpace(k.Open) == "" {
+		k.Open = def.Open
+	}
+	if strings.TrimSpace(k.Submit) == "" {
+		k.Submit = def.Submit
+	}
+	if strings.TrimSpace(k.Cancel) == "" {
+		k.Cancel = def.Cancel
+	}
+	if strings.TrimSpace(k.Confirm) == "" {
+		k.Confirm = def.Confirm
+	}
+	if strings.TrimSpace(k.Decline) == "" {
+		k.Decline = def.Decline
+	}
+	return k
+}
+
+// SplitKeyList splits a comma-separated key list into trimmed, non-empty
+// entries. "q, ctrl+c" -> ["q", "ctrl+c"]; "" -> [].
+func SplitKeyList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Default returns the built-in configuration values. SessionRoot is the
 // per-user location sessions land in (a leading "~/" is expanded by Load).
 func Default() *Config {
@@ -211,7 +342,7 @@ func Default() *Config {
 		Screenshot: ScreenshotConfig{Tool: "flameshot"},
 		Capture:    CaptureConfig{IncludeOutput: &includeOutput, ReloadOnHotkey: &reloadOnHotkey, CountTimeoutMs: DefaultCommandCountTimeout},
 		Popup:      PopupConfig{Width: DefaultPopupWidth, Height: DefaultPopupHeight, Font: "Sans 13", KeepRatio: &keepRatio},
-		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5"},
+		Keymaps:    KeymapConfig{Screenshot: "Alt+1", Command: "Alt+2", Note: "Alt+3", Selection: "Alt+4", Reload: "Alt+5", Inventory: defaultInventoryKeymap()},
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 		Themes:     ThemesConfig{},
 		Blog:       BlogConfig{CaptionPosition: "above"},
@@ -541,6 +672,26 @@ const defaultFileText = `# snapshell configuration
   selection  = "Alt+4"
   reload     = "Alt+5"   # re-read config + re-grab hotkeys, no restart
 
+  # Keys for the review TUI ('snapshell inventory'). Each is a comma-separated
+  # list of key names as the terminal reports them. Empty = default. ctrl+c
+  # always quits, even while typing, and cannot be rebound.
+  [keymaps.inventory]
+  quit       = "q, ctrl+c"  # leave the review TUI
+  up         = "up, k"      # previous card
+  down       = "down, j"    # next card
+  page_up    = "pgup"       # scroll the code/blog preview up
+  page_down  = "pgdown"     # scroll the code/blog preview down
+  append     = "a"          # commit the selected card with no caption
+  caption    = "c"          # caption the selected card
+  discard    = "d"          # discard the selected card
+  note       = "n"          # write a standalone note
+  blog       = "v"          # toggle the blog.md render view
+  open       = "enter"      # view the selected screenshot
+  submit     = "ctrl+s"     # save the caption/note being typed
+  cancel     = "esc"        # back out of the current view
+  confirm    = "y, Y"       # yes to the discard prompt
+  decline    = "n, N"       # no to the discard prompt
+
 [paths]
   # Where session folders (and their blog.md + attachments/) are stored.
   # "~/.local/share/snapshell" is the default (always writable); you can
@@ -642,6 +793,51 @@ func fillDefaults(c *Config) {
 	}
 	if strings.TrimSpace(c.Keymaps.Reload) == "" {
 		c.Keymaps.Reload = def.Keymaps.Reload
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Quit) == "" {
+		c.Keymaps.Inventory.Quit = def.Keymaps.Inventory.Quit
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Up) == "" {
+		c.Keymaps.Inventory.Up = def.Keymaps.Inventory.Up
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Down) == "" {
+		c.Keymaps.Inventory.Down = def.Keymaps.Inventory.Down
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.PageUp) == "" {
+		c.Keymaps.Inventory.PageUp = def.Keymaps.Inventory.PageUp
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.PageDown) == "" {
+		c.Keymaps.Inventory.PageDown = def.Keymaps.Inventory.PageDown
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Append) == "" {
+		c.Keymaps.Inventory.Append = def.Keymaps.Inventory.Append
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Caption) == "" {
+		c.Keymaps.Inventory.Caption = def.Keymaps.Inventory.Caption
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Discard) == "" {
+		c.Keymaps.Inventory.Discard = def.Keymaps.Inventory.Discard
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Note) == "" {
+		c.Keymaps.Inventory.Note = def.Keymaps.Inventory.Note
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Blog) == "" {
+		c.Keymaps.Inventory.Blog = def.Keymaps.Inventory.Blog
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Open) == "" {
+		c.Keymaps.Inventory.Open = def.Keymaps.Inventory.Open
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Submit) == "" {
+		c.Keymaps.Inventory.Submit = def.Keymaps.Inventory.Submit
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Cancel) == "" {
+		c.Keymaps.Inventory.Cancel = def.Keymaps.Inventory.Cancel
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Confirm) == "" {
+		c.Keymaps.Inventory.Confirm = def.Keymaps.Inventory.Confirm
+	}
+	if strings.TrimSpace(c.Keymaps.Inventory.Decline) == "" {
+		c.Keymaps.Inventory.Decline = def.Keymaps.Inventory.Decline
 	}
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot

@@ -508,9 +508,58 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2"} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2", "[keymaps.inventory]", "quit       = \"q, ctrl+c\"", "up         = \"up, k\"", "down       = \"down, j\"", "page_up    = \"pgup\"", "append     = \"a\"", "caption    = \"c\"", "discard    = \"d\"", "note       = \"n\"", "blog       = \"v\"", "open       = \"enter\"", "submit     = \"ctrl+s\"", "cancel     = \"esc\"", "confirm    = \"y, Y\"", "decline    = \"n, N\""} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
+		}
+	}
+}
+
+func TestInventoryKeysDefaultsAndPartial(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	// Empty file -> every binding is the default.
+	all := load("").InventoryKeys()
+	want := defaultInventoryKeymap()
+	if !reflect.DeepEqual(all, want) {
+		t.Fatalf("empty config inventory keys:\n got %+v\nwant %+v", all, want)
+	}
+
+	// A partial [keymaps.inventory] only overrides what was written.
+	partial := load("[keymaps.inventory]\nblog = \"b\"\nsubmit = \"ctrl+enter\"\n").InventoryKeys()
+	if partial.Blog != "b" {
+		t.Fatalf("blog = %q, want \"b\"", partial.Blog)
+	}
+	if partial.Submit != "ctrl+enter" {
+		t.Fatalf("submit = %q, want \"ctrl+enter\"", partial.Submit)
+	}
+	if partial.Quit != want.Quit || partial.Up != want.Up || partial.Confirm != want.Confirm {
+		t.Fatalf("unwritten actions must keep defaults, got quit=%q up=%q confirm=%q", partial.Quit, partial.Up, partial.Confirm)
+	}
+}
+
+func TestSplitKeyList(t *testing.T) {
+	for in, want := range map[string][]string{
+		"":              nil,
+		"q":             {"q"},
+		"q, ctrl+c":     {"q", "ctrl+c"},
+		"  y  , Y ,esc": {"y", "Y", "esc"},
+		"up, k,, down":  {"up", "k", "down"},
+		",,":            nil,
+	} {
+		if got := SplitKeyList(in); !reflect.DeepEqual(got, want) {
+			t.Fatalf("SplitKeyList(%q) = %v, want %v", in, got, want)
 		}
 	}
 }

@@ -429,26 +429,77 @@ func (m model) footer() string {
 func (m model) footerText() string {
 	switch m.st {
 	case stateCaption:
-		return "Ctrl+S save caption · Esc cancel"
+		return fmt.Sprintf("%s save caption · %s cancel", keyLabel(m.keys.Submit), keyLabel(m.keys.Cancel))
 	case stateNote:
-		return "Ctrl+S save note · Esc cancel"
+		return fmt.Sprintf("%s save note · %s cancel", keyLabel(m.keys.Submit), keyLabel(m.keys.Cancel))
 	case stateDiscard:
-		return "y yes, discard permanently · n / Esc no"
+		return fmt.Sprintf("%s yes, discard permanently · %s / %s no", keyLabel(m.keys.Confirm), keyLabel(m.keys.Decline), keyLabel(m.keys.Cancel))
 	case stateRender:
-		return "↑/↓ / PgUp / PgDn scroll · v / Esc back · q quit"
+		return fmt.Sprintf("%s/%s/%s/%s scroll · %s/%s back · %s quit",
+			keyLabel(m.keys.Up), keyLabel(m.keys.Down), keyLabel(m.keys.PageUp), keyLabel(m.keys.PageDown),
+			keyLabel(m.keys.Blog), keyLabel(m.keys.Cancel), keyLabel(m.keys.Quit))
 	case stateImage:
-		return "Esc / v back · q quit"
+		return fmt.Sprintf("%s/%s back · %s quit", keyLabel(m.keys.Blog), keyLabel(m.keys.Cancel), keyLabel(m.keys.Quit))
 	default:
-		hint := "↑/↓ move · a append as-is · c caption · d discard · n note · v view blog · q quit"
+		hint := fmt.Sprintf("%s move · %s append as-is · %s caption · %s discard · %s note · %s view blog · %s quit",
+			keyLabel(m.keys.Up), keyLabel(m.keys.Append), keyLabel(m.keys.Caption), keyLabel(m.keys.Discard),
+			keyLabel(m.keys.Note), keyLabel(m.keys.Blog), keyLabel(m.keys.Quit))
 		if len(m.cards) > 0 {
 			if m.cards[m.sel].Kind == inventory.KindCode {
-				hint += " · PgUp / PgDn scroll preview"
+				hint += fmt.Sprintf(" · %s/%s scroll preview", keyLabel(m.keys.PageUp), keyLabel(m.keys.PageDown))
 			} else {
-				hint += " · Enter view image"
+				hint += fmt.Sprintf(" · %s view image", keyLabel(m.keys.Open))
 			}
 		}
 		return hint
 	}
+}
+
+// keyLabel renders a binding list for the footer ("↑/k", "q/ctrl+c",
+// "PgUp/PgDn", ...). Keys are shown as the terminal reports them, prettified.
+func keyLabel(list []string) string {
+	labels := make([]string, 0, len(list))
+	for _, k := range list {
+		labels = append(labels, keyLabelOne(k))
+	}
+	return strings.Join(labels, "/")
+}
+
+func keyLabelOne(k string) string {
+	switch k {
+	case "up":
+		return "↑"
+	case "down":
+		return "↓"
+	case "left":
+		return "←"
+	case "right":
+		return "→"
+	case "esc":
+		return "Esc"
+	case "enter":
+		return "Enter"
+	case "pgup":
+		return "PgUp"
+	case "pgdown":
+		return "PgDn"
+	case "space":
+		return "Space"
+	}
+	parts := strings.Split(k, "+")
+	for i, p := range parts {
+		parts[i] = keyTitle(p)
+	}
+	return strings.Join(parts, "+")
+}
+
+// keyTitle capitalizes a single key name for display ("ctrl" -> "Ctrl",
+// "s" -> "S", "f5" -> "F5").
+func keyTitle(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // fillPane pads content to a fixed w×h box so the layout never shifts when

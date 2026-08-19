@@ -40,6 +40,23 @@ note       = "Alt+3"
 selection  = "Alt+4"      # capture selected text (clipboard fallback)
 reload     = "Alt+5"      # re-read config + re-grab hotkeys, no restart
 
+[keymaps.inventory]        # keys for the review TUI ('snapshell inventory')
+quit      = "q, ctrl+c"    # each value is a comma-separated list of key
+up        = "up, k"        # names as the terminal reports them ("q",
+down      = "down, j"      # "ctrl+c", "up", "enter", "esc", "pgup", "y",
+page_up   = "pgup"         # "Y", ...). Empty = default. ctrl+c ALWAYS
+page_down = "pgdown"       # quits in every state and cannot be rebound.
+append    = "a"            #   append-as-is / caption / discard / note /
+caption   = "c"            #   blog-view / open-image in the card list
+discard   = "d"            # page_up/page_down scroll the code/blog preview;
+note      = "n"            # submit/cancel act in the caption/note editors;
+blog      = "v"            # confirm/decline answer the discard prompt
+open      = "enter"
+submit    = "ctrl+s"
+cancel    = "esc"
+confirm   = "y, Y"
+decline   = "n, N"
+
 [paths]
 session_root = "~/.local/share/snapshell"
 
@@ -111,6 +128,13 @@ close_delay_secs = 5        # seconds an opened image stays up before
   can be concrete ("none of flameshot, mate-screenshot found on PATH")
   rather than vague. (zenity is not resolved here — `internal/popup` does
   its own `exec.LookPath` and names the missing binary itself.)
+- **Inventory-TUI keymaps live here**: `InventoryKeys()` fills `[keymaps.inventory]`
+  with defaults for any action left empty (partial configs are fine, like
+  everywhere else), and `SplitKeyList()` splits a comma-separated binding
+  list into trimmed, non-empty key names. `cmd/snapshell` maps the raw
+  strings onto `tui.Keys`; the TUI package owns the key-handling and its own
+  `DefaultKeys()` fallback. `ctrl+c` always quits the TUI in every state and
+  is deliberately not part of any binding list.
 - **`keep_ratio` is applied at load time** (`normalizeKeepRatio`): when on
   (default), exactly one dimension changed away from the default
   (`DefaultPopupWidth` 560 / `DefaultPopupHeight` 320) makes the other

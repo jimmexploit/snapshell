@@ -67,7 +67,32 @@ func runTUI() error {
 		BlogImageScale:   cfg.BlogImageScale(),
 		BlogImageAlign:   cfg.BlogImageAlign(),
 		BlogImagePadding: cfg.BlogImagePadding(),
+		Keys:             inventoryKeysFrom(cfg),
 	})
+}
+
+// inventoryKeysFrom maps the [keymaps.inventory] config onto the TUI's key
+// bindings. Every field is filled by config.InventoryKeys with its default,
+// so a partial config never leaves an action unbindable.
+func inventoryKeysFrom(cfg *config.Config) tui.Keys {
+	ik := cfg.InventoryKeys()
+	return tui.Keys{
+		Quit:     config.SplitKeyList(ik.Quit),
+		Up:       config.SplitKeyList(ik.Up),
+		Down:     config.SplitKeyList(ik.Down),
+		PageUp:   config.SplitKeyList(ik.PageUp),
+		PageDown: config.SplitKeyList(ik.PageDown),
+		Append:   config.SplitKeyList(ik.Append),
+		Caption:  config.SplitKeyList(ik.Caption),
+		Discard:  config.SplitKeyList(ik.Discard),
+		Note:     config.SplitKeyList(ik.Note),
+		Blog:     config.SplitKeyList(ik.Blog),
+		Open:     config.SplitKeyList(ik.Open),
+		Submit:   config.SplitKeyList(ik.Submit),
+		Cancel:   config.SplitKeyList(ik.Cancel),
+		Confirm:  config.SplitKeyList(ik.Confirm),
+		Decline:  config.SplitKeyList(ik.Decline),
+	}
 }
 
 // ipcClient is the TUI's view of the daemon: every mutation goes over the
