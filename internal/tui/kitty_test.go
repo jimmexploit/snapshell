@@ -211,6 +211,39 @@ func TestImageScaleShrinksRows(t *testing.T) {
 	}
 }
 
+func TestParseCellSize(t *testing.T) {
+	for resp, want := range map[string]float64{
+		"\x1b[6;34;15t": 15.0 / 34.0,
+		"\x1b[6;34;17t": 0.5,
+		"\x1b[6;20;12t": 0.6,
+		"":              0,
+		"\x1b[6;34t":    0,
+		"garbage":       0,
+	} {
+		if got := parseCellSize(resp); got != want {
+			t.Fatalf("parseCellSize(%q) = %v, want %v", resp, got, want)
+		}
+	}
+}
+
+func TestKittyFitRowsRatio(t *testing.T) {
+	// Wider cells (smaller ratio) cap the row count sooner for a wide image.
+	tall := kittyFitRowsRatio(100, 100, 100, 40, 0.5)
+	if tall != 40 {
+		t.Fatalf("square image at 0.5 ratio rows = %d, want 40 (pane height)", tall)
+	}
+	wide := kittyFitRowsRatio(200, 100, 100, 40, 0.5)
+	if wide != 25 { // 100 * 0.5 * 100/200
+		t.Fatalf("wide image at 0.5 ratio rows = %d, want 25", wide)
+	}
+	// A 0.4 ratio means cells are 25% wider → the same image needs 20% fewer
+	// rows to stay inside the pane.
+	narrow := kittyFitRowsRatio(200, 100, 100, 40, 0.4)
+	if narrow != 20 { // 100 * 0.4 * 100/200
+		t.Fatalf("wide image at 0.4 ratio rows = %d, want 20", narrow)
+	}
+}
+
 func TestKittyPadLine(t *testing.T) {
 	esc := "\x1b_Gx;y\x1b\\"
 	got := kittyPadLine(esc, 10)

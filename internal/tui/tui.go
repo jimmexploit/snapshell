@@ -48,6 +48,8 @@ type Options struct {
 	ImageRender      string        // "tab" (Enter opens full-screen) or "inline" (preview pane)
 	ImageInlineScale float64       // inline preview size multiplier: 0.5 = half the pane fit
 	BlogImageScale   float64       // "view blog" screenshot size multiplier: 1.0 = fit the render pane
+	BlogImageAlign   string        // "view blog" screenshot horizontal position: "left", "center", "right"
+	BlogImagePadding int           // edge gap in cells for left/right blog alignment (0 = flush)
 }
 
 // Run starts the review TUI in the foreground and blocks until the user
@@ -66,9 +68,15 @@ func Run(opts Options) error {
 	if opts.BlogImageScale <= 0 {
 		opts.BlogImageScale = 1
 	}
+	if opts.BlogImageAlign != "center" && opts.BlogImageAlign != "right" {
+		opts.BlogImageAlign = "left"
+	}
 	if opts.ImageRender != "inline" {
 		opts.ImageRender = "tab"
 	}
+	// Measure the terminal's real cell ratio (kitty CSI 16 t) before bubbletea
+	// owns stdin, so centered/right-aligned blog screenshots place exactly.
+	queryCellSize()
 	p := tea.NewProgram(newModel(opts), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("review TUI: %w", err)
@@ -134,10 +142,11 @@ type model struct {
 	detailContent string
 	detailVP      viewport.Model
 
-	renderContent string
-	renderVP      viewport.Model
-	renderer      *glamour.TermRenderer
-	renderWidth   int
+	renderContent   string
+	renderVP        viewport.Model
+	renderImgBlocks []blogImageBlock
+	renderer        *glamour.TermRenderer
+	renderWidth     int
 
 	// previewRenderer renders the caption/note markdown previews. It wraps
 	// at construction time (like renderer), so it is cached per width and
@@ -158,6 +167,9 @@ func newModel(opts Options) model {
 	}
 	if opts.BlogImageScale <= 0 {
 		opts.BlogImageScale = 1
+	}
+	if opts.BlogImageAlign != "center" && opts.BlogImageAlign != "right" {
+		opts.BlogImageAlign = "left"
 	}
 	if opts.ImageRender != "inline" {
 		opts.ImageRender = "tab"

@@ -78,7 +78,7 @@ func TestComposeRenderImagesInline(t *testing.T) {
 
 	client := &fakeClient{listRes: ListResult{Dir: dir, Cards: []inventory.Card{}}}
 	m := newModel(Options{Client: client})
-	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 60})
 	m, _ = upd(t, m, listMsg{dir: dir, cards: []inventory.Card{}})
 
 	md := "# Recon\n\n- scanned port 80\n\n![](attachments/001.png)\n\n- checked the banner"
@@ -93,6 +93,31 @@ func TestComposeRenderImagesInline(t *testing.T) {
 	}
 	if !strings.Contains(content, "•") {
 		t.Fatalf("render view should keep glamour bullets in the text:\n%q", content)
+	}
+	// A blank line separates the image from the text above and below it, so
+	// the screenshot never sits glued to the surrounding paragraphs. Checked
+	// on the raw composed content (the viewport pads blank lines to width).
+	raw := m.composeRender(md, 100)
+	if !strings.Contains(raw, "\n\n\x1b_G") {
+		t.Fatalf("composed content should put a blank line before the image:\n%q", raw)
+	}
+	lines := strings.Split(content, "\n")
+	escIdx := -1
+	for i, l := range lines {
+		if strings.Contains(l, "\x1b_G") {
+			escIdx = i
+			break
+		}
+	}
+	if len(m.renderImgBlocks) == 0 {
+		t.Fatal("render should record the image block layout")
+	}
+	if escIdx >= 0 {
+		// The line after the block's last pad row is the blank separator.
+		next := escIdx + m.renderImgBlocks[0].rows
+		if next >= len(lines) || strings.TrimSpace(lines[next]) != "" {
+			t.Fatalf("expected a blank line after the image block:\n%q", content)
+		}
 	}
 	// The full frame also clears stale images before redrawing.
 	if view := m.View(); !strings.Contains(view, "\x1b_Ga=d,d=A,q=2\x1b\\") {
@@ -133,10 +158,12 @@ func TestRenderImageBlockFallback(t *testing.T) {
 	m.dir = dir
 
 	// Missing file -> dim label, no escape.
-	if got := m.renderImageBlock("attachments/nope.png", 100, 40); strings.Contains(got, "\x1b_G") {
+	if blk, got := m.renderImageBlock("attachments/nope.png", 100, 40); strings.Contains(got, "\x1b_G") {
 		t.Fatalf("missing file should fall back to a label:\n%q", got)
 	} else if !strings.Contains(got, "[image: attachments/nope.png]") {
 		t.Fatalf("missing file should show the dim label:\n%q", got)
+	} else if blk.rows != 0 {
+		t.Fatalf("missing file block should have no rows, got %d", blk.rows)
 	}
 
 	// Non-PNG ref -> label too.
@@ -144,7 +171,110 @@ func TestRenderImageBlockFallback(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.renderImageBlock("note.txt", 100, 40); strings.Contains(got, "\x1b_G") {
+	if blk, got := m.renderImageBlock("note.txt", 100, 40); strings.Contains(got, "\x1b_G") {
 		t.Fatalf("non-PNG should fall back to a label:\n%q", got)
+	} else if blk.rows != 0 {
+		t.Fatalf("non-PNG block should have no rows, got %d", blk.rows)
+	}
+}
+
+func TestPatchRenderImagesScrollFade(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	defer resetKittyState()
+
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "attachments", "001.png")
+	writePNG(t, imgPath, 100, 100)
+
+	m := newModel(Options{Client: &fakeClient{}})
+	m.dir = dir
+	m.width = 100
+
+	blk := blogImageBlock{line: 2, rows: 20, abs: imgPath, imgW: 100, imgH: 100, dispW: 40}
+
+	// Bottom cut: the anchor line is still on screen but the image would
+	// spill past the pane (over the footer); clamp to the visible rows.
+	m.renderImgBlocks = []blogImageBlock{blk}
+	out := m.patchRenderImages(strings.Repeat("\n", 20), 0, 20)
+	if line := strings.Split(out, "\n")[2]; !strings.Contains(line, "r=18,y=0,h=90,C=1") {
+		t.Fatalf("bottom-cut escape should clamp to the 18 visible rows:\n%q", line)
+	}
+
+	// Top cut: the anchor line has scrolled above the window; the first
+	// visible row (pane row 0) must carry a crop escape hiding the rows that
+	// scrolled out, so the image fades off instead of vanishing.
+	out = m.patchRenderImages(strings.Repeat("\n", 20), 5, 20)
+	if line := strings.Split(out, "\n")[0]; !strings.Contains(line, "r=17,y=15,h=85,C=1") {
+		t.Fatalf("top-cut escape should crop the 3 hidden rows:\n%q", line)
+	}
+
+	// Fully visible: no crop, the whole image re-placed on its anchor line.
+	blk.rows = 10
+	blk.dispW = 20
+	m.renderImgBlocks = []blogImageBlock{blk}
+	out = m.patchRenderImages(strings.Repeat("\n", 20), 0, 20)
+	if line := strings.Split(out, "\n")[2]; !strings.Contains(line, "r=10,y=0,h=100,C=1") {
+		t.Fatalf("full-image escape should show all rows:\n%q", line)
+	}
+
+	// Scrolled entirely past the image: nothing placed.
+	out = m.patchRenderImages(strings.Repeat("\n", 20), 15, 20)
+	if strings.Contains(out, "\x1b_Ga=T") {
+		t.Fatalf("scrolled-past image should not be placed:\n%q", out)
+	}
+
+	// Not in kitty: no placement escapes at all.
+	blk.rows = 20
+	m.renderImgBlocks = []blogImageBlock{blk}
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM", "xterm-256color")
+	out = m.patchRenderImages(strings.Repeat("\n", 20), 5, 20)
+	if strings.Contains(out, "\x1b_Ga=T") {
+		t.Fatalf("non-kitty render should not emit placement escapes:\n%q", out)
+	}
+}
+
+func TestBlogImageAlign(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1")
+	defer resetKittyState()
+
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "001.png")
+	writePNG(t, imgPath, 100, 100)
+
+	// 100x100 image in a 100x40 pane fits at 40 rows -> 80 display cells.
+	m := newModel(Options{Client: &fakeClient{}, BlogImageAlign: "center"})
+	m.dir = dir
+	m.width = 100
+	blk, part := m.renderImageBlock("001.png", 100, 40)
+	if blk.dispW != 80 {
+		t.Fatalf("dispW = %d, want 80", blk.dispW)
+	}
+	first := strings.Split(part, "\n")[0]
+	// Center is never nudged by padding: lead = (100-80)/2 = 10.
+	if lead := strings.Index(first, "\x1b_G"); lead != 10 {
+		t.Fatalf("centered escape should start at column 10, got %d:\n%q", lead, first)
+	}
+
+	// Right align keeps the default 2-cell edge padding.
+	m.opts.BlogImagePadding = 2
+	m.opts.BlogImageAlign = "right"
+	_, part = m.renderImageBlock("001.png", 100, 40)
+	if lead := strings.Index(strings.Split(part, "\n")[0], "\x1b_G"); lead != 18 {
+		t.Fatalf("right-aligned escape should start at column 18 (100-80-2), got %d", lead)
+	}
+
+	// Left align keeps the default 2-cell edge padding.
+	m.opts.BlogImageAlign = "left"
+	_, part = m.renderImageBlock("001.png", 100, 40)
+	if lead := strings.Index(strings.Split(part, "\n")[0], "\x1b_G"); lead != 2 {
+		t.Fatalf("left-aligned escape should start at column 2, got %d", lead)
+	}
+
+	// An explicit 0 padding puts it flush.
+	m.opts.BlogImagePadding = 0
+	_, part = m.renderImageBlock("001.png", 100, 40)
+	if lead := strings.Index(strings.Split(part, "\n")[0], "\x1b_G"); lead != 0 {
+		t.Fatalf("left-aligned flush escape should start at column 0, got %d", lead)
 	}
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bufio"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -8,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"golang.org/x/term"
 )
 
 // kittyEnabled reports whether the current terminal is kitty, the only
@@ -26,10 +30,17 @@ func kittyEnabled() bool {
 // of the display width only exists to keep the image from spilling over the
 // pane edge. cellRatio is the typical cell width/height (≈0.5).
 func kittyFitRows(imgW, imgH, paneW, paneH int) int {
-	if imgW <= 0 || imgH <= 0 || paneW <= 0 || paneH <= 0 {
+	return kittyFitRowsRatio(imgW, imgH, paneW, paneH, 0.5)
+}
+
+// kittyFitRowsRatio is kittyFitRows with an explicit cell width/height ratio;
+// the blog render passes the measured cell ratio so its screenshots neither
+// spill over the pane edge nor mis-center when the font's cells are wider
+// than the ~0.5 guess.
+func kittyFitRowsRatio(imgW, imgH, paneW, paneH int, cellRatio float64) int {
+	if imgW <= 0 || imgH <= 0 || paneW <= 0 || paneH <= 0 || cellRatio <= 0 {
 		return 0
 	}
-	const cellRatio = 0.5
 	rows := paneH
 	if maxRowsByWidth := int(float64(paneW) * cellRatio * float64(imgH) / float64(imgW)); maxRowsByWidth < rows {
 		rows = maxRowsByWidth
@@ -38,6 +49,92 @@ func kittyFitRows(imgW, imgH, paneW, paneH int) int {
 		rows = 1
 	}
 	return rows
+}
+
+// cellSize caches the measured terminal cell width/height ratio, filled in
+// once by queryCellSize() before the TUI starts. 0.5 is the fallback for a
+// typical monospace cell when the terminal can't be queried.
+var cellSize = struct {
+	mu    sync.Mutex
+	ratio float64
+}{ratio: 0.5}
+
+// cellRatio returns the measured cell width/height ratio.
+func cellRatio() float64 {
+	cellSize.mu.Lock()
+	defer cellSize.mu.Unlock()
+	return cellSize.ratio
+}
+
+func setCellRatio(r float64) {
+	if r <= 0 {
+		return
+	}
+	cellSize.mu.Lock()
+	cellSize.ratio = r
+	cellSize.mu.Unlock()
+}
+
+// queryCellSize measures the terminal's cell width/height ratio via the
+// CSI 16 t query (cell size in pixels; kitty replies "CSI 6 ; H ; W t"). The
+// blog alignment and fit math assume ~0.5 (a typical monospace cell); when
+// the font's cells are wider, screenshots render slightly wider than that
+// estimate, so a centered one drifts right and can clip at the pane edge.
+// Measuring the real cell fixes both. It must run before bubbletea takes over
+// stdin, and only when stdin is a terminal and the query will actually be
+// answered (kitty, which sets KITTY_WINDOW_ID); any failure leaves the 0.5
+// default. The read is time-boxed so a terminal that ignores the query can't
+// hang the TUI.
+func queryCellSize() {
+	if !kittyEnabled() {
+		return
+	}
+	f, err := os.Stdin.Stat()
+	if err != nil || f.Mode()&os.ModeCharDevice == 0 {
+		return
+	}
+	fd := int(os.Stdin.Fd())
+	old, err := term.MakeRaw(fd)
+	if err != nil {
+		return
+	}
+	defer term.Restore(fd, old)
+	if _, err := os.Stdout.WriteString("\x1b[16t"); err != nil {
+		return
+	}
+	resp := make(chan string, 1)
+	go func() {
+		s, err := bufio.NewReader(os.Stdin).ReadString('t')
+		if err == nil {
+			resp <- s
+		}
+	}()
+	select {
+	case s := <-resp:
+		setCellRatio(parseCellSize(s))
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// parseCellSize extracts the width/height ratio from the CSI 16 t response
+// "CSI 6 ; <height> ; <width> t" (the trailing t is the terminator byte the
+// reader stopped at).
+func parseCellSize(resp string) float64 {
+	rest, ok := strings.CutPrefix(resp, "\x1b[6;")
+	if !ok {
+		return 0
+	}
+	rest = strings.TrimSuffix(rest, "t")
+	parts := strings.Split(rest, ";")
+	if len(parts) < 2 {
+		return 0
+	}
+	h, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	w, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err1 != nil || err2 != nil || h <= 0 || w <= 0 {
+		return 0
+	}
+	return w / h
 }
 
 // buildKittyEscape renders the kitty graphics protocol sequence that
@@ -72,6 +169,31 @@ func buildKittyEscapeID(path string, rows int, id uint32) (string, error) {
 		idPart = fmt.Sprintf("i=%d,", id)
 	}
 	return fmt.Sprintf("\x1b_Ga=T,f=100,t=f,q=2,%sr=%d,C=1;%s\x1b\\", idPart, rows, encoded), nil
+}
+
+// buildKittyEscapeCrop renders the kitty graphics sequence that transmits the
+// PNG and displays only the vertical slice of its pixel rows [y, y+h) at the
+// cursor, scaled to rows terminal rows. While the blog page scrolls, an image
+// whose top has moved above the window is re-placed with those hidden rows
+// cropped away, so the screenshot fades off the top edge one row at a time
+// instead of vanishing whole. The width is derived by kitty from the cropped
+// aspect ratio (only rows is sent), matching the no-crop escape's width.
+func buildKittyEscapeCrop(path string, rows, y, h int) (string, error) {
+	if rows < 1 || y < 0 || h < 1 {
+		return "", fmt.Errorf("kitty crop escape: rows=%d y=%d h=%d out of range", rows, y, h)
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(abs))
+	if encoded == "" {
+		return "", fmt.Errorf("empty path: %s", path)
+	}
+	return fmt.Sprintf("\x1b_Ga=T,f=100,t=f,q=2,r=%d,y=%d,h=%d,C=1;%s\x1b\\", rows, y, h, encoded), nil
 }
 
 // imgMemo caches the fully-built escape for a (path, rows) pair so a screen

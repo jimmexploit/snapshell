@@ -75,6 +75,13 @@ close_delay_secs = 5        # seconds an opened image stays up before
                              # fit (100 = full fit when unset; distinct from
                              # image_scale_percent, which governs the image
                              # card previews). Explicit values clamp to 1..100.
+ blog_image_align = "left"   # horizontal position of each screenshot in the
+                             # "view blog" render: "left" (default), "center",
+                             # or "right". Ignored by the image card previews.
+ blog_image_padding = 2      # edge gap in cells kept for left/right-aligned
+                             # blog screenshots (so they aren't glued to the
+                             # edge). 0 = flush. Ignored for "center" and by
+                             # the image card previews.
 ```
 
 ## Behavior

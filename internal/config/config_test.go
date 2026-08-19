@@ -385,6 +385,68 @@ func TestBlogImageScaleConfig(t *testing.T) {
 	}
 }
 
+func TestBlogImageAlignConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	if cfg := load(""); cfg.BlogImageAlign() != "left" {
+		t.Fatalf("default BlogImageAlign = %q, want left", cfg.BlogImageAlign())
+	}
+	for body, want := range map[string]string{
+		"[inventory]\nblog_image_align = \"center\"\n":   "center",
+		"[inventory]\nblog_image_align = \"right\"\n":    "right",
+		"[inventory]\nblog_image_align = \"left\"\n":     "left",
+		"[inventory]\nblog_image_align = \"\"\n":         "left",
+		"[inventory]\nblog_image_align = \"sideways\"\n": "sideways",
+	} {
+		if got := load(body).BlogImageAlign(); got != want {
+			t.Fatalf("BlogImageAlign for %q = %q, want %q", body, got, want)
+		}
+	}
+}
+
+func TestBlogImagePaddingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	if cfg := load(""); cfg.BlogImagePadding() != 2 {
+		t.Fatalf("default BlogImagePadding = %d, want 2", cfg.BlogImagePadding())
+	}
+	if cfg := load("[inventory]\nblog_image_padding = 0\n"); cfg.BlogImagePadding() != 0 {
+		t.Fatalf("explicit 0 padding should stay flush, got %d", cfg.BlogImagePadding())
+	}
+	if cfg := load("[inventory]\nblog_image_padding = 6\n"); cfg.BlogImagePadding() != 6 {
+		t.Fatalf("padding 6 = %d, want 6", cfg.BlogImagePadding())
+	}
+	// Negative is nonsensical -> back to the default; oversized clamps.
+	if cfg := load("[inventory]\nblog_image_padding = -4\n"); cfg.BlogImagePadding() != 2 {
+		t.Fatalf("negative padding should fall back to 2, got %d", cfg.BlogImagePadding())
+	}
+	if cfg := load("[inventory]\nblog_image_padding = 500\n"); cfg.BlogImagePadding() != 100 {
+		t.Fatalf("oversized padding should clamp to 100, got %d", cfg.BlogImagePadding())
+	}
+}
+
 func TestKeepRatioDefaultOn(t *testing.T) {
 	cfg := loadPopup(t, "width = 560\nheight = 320\n")
 	if !cfg.KeepRatioOn() {
@@ -446,7 +508,7 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100"} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}

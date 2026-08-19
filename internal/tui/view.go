@@ -331,7 +331,64 @@ func (m model) renderPane() string {
 	if m.renderContent == "" {
 		return fillPane(dimStyle.Render("No entries in blog.md yet — commit some cards or write a note."), m.width, paneH)
 	}
-	return m.renderVP.View()
+	out := m.renderVP.View()
+	if len(m.renderImgBlocks) == 0 {
+		return out
+	}
+	return m.patchRenderImages(out, m.renderVP.YOffset, paneH)
+}
+
+// patchRenderImages rewrites the viewport lines that carry each image block
+// with a per-frame transmit escape so a screenshot that is only partially in
+// view is cropped to the visible part. The render frame deletes every kitty
+// placement first, so a scrolled image must be re-placed every frame; cropping
+// away the hidden rows lets the top fade off one row at a time instead of the
+// whole image vanishing the moment its anchor line scrolls above the window.
+// It also clamps an image whose bottom would spill over the pane (covering the
+// footer) to the rows actually visible.
+func (m model) patchRenderImages(out string, offset, paneH int) string {
+	if !kittyEnabled() {
+		return out
+	}
+	lines := strings.Split(out, "\n")
+	for _, blk := range m.renderImgBlocks {
+		relTop := blk.line - offset
+		relBot := relTop + blk.rows
+		if relBot <= 0 || relTop >= paneH {
+			continue // scrolled entirely out of view
+		}
+		skipTop, skipBot := 0, 0
+		if relTop < 0 {
+			skipTop = -relTop
+		}
+		if relBot > paneH {
+			skipBot = relBot - paneH
+		}
+		visRows := blk.rows - skipTop - skipBot
+		if visRows < 1 {
+			continue
+		}
+		cropY := skipTop * blk.imgH / blk.rows
+		cropH := visRows * blk.imgH / blk.rows
+		if cropH < 1 {
+			cropH = 1
+		}
+		esc, err := buildKittyEscapeCrop(blk.abs, visRows, cropY, cropH)
+		if err != nil {
+			continue
+		}
+		// The image is anchored to the first visible row of its block: the
+		// block's anchor line while still on screen, pane row 0 once its top
+		// has scrolled above the window.
+		idx := 0
+		if relTop >= 0 {
+			idx = relTop
+		}
+		if idx < len(lines) {
+			lines[idx] = kittyPadLine(strings.Repeat(" ", m.blogAlignLead(blk.dispW))+esc, m.width)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // listPane renders the right column: one line per pending card, oldest

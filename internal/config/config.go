@@ -138,6 +138,12 @@ const DefaultImageScalePercent = 100
 // means 100.
 const DefaultBlogImageScalePercent = 100
 
+// DefaultBlogImagePadding is the default [inventory].blog_image_padding: the
+// gap, in cells, kept between a screenshot and the left/right pane edge when
+// [inventory].blog_image_align is "left" or "right". Center alignment ignores
+// it (the image is always centered on the pane). An unset key means 2.
+const DefaultBlogImagePadding = 2
+
 // MaxInlineImageScalePercent is the hard cap on the inline preview image
 // size: even an explicit image_scale_percent above this is clamped down, so
 // the in-pane preview can never take over more than ~2/3 of the pane.
@@ -184,6 +190,15 @@ type InventoryConfig struct {
 	// inventory image card previews. A *int so an unset key is
 	// distinguishable from an explicit value.
 	BlogImageScalePercent *int `toml:"blog_image_scale_percent"`
+	// BlogImageAlign is where each screenshot in the "view blog" render sits
+	// horizontally: "left" (default, flush to the pane edge), "center", or
+	// "right". Ignored by image cards in the inventory view.
+	BlogImageAlign string `toml:"blog_image_align"`
+	// BlogImagePadding is the gap, in cells, between a screenshot and the
+	// pane edge when BlogImageAlign is "left" or "right" (so the image isn't
+	// glued to the edge). Ignored for "center" (and for the inventory view).
+	// A *int so an explicit 0 (flush) is distinguishable from an unset key.
+	BlogImagePadding *int `toml:"blog_image_padding"`
 }
 
 // Default returns the built-in configuration values. SessionRoot is the
@@ -328,6 +343,34 @@ func (c *Config) BlogImageScale() float64 {
 		v = DefaultBlogImageScalePercent
 	}
 	return float64(v) / 100
+}
+
+// BlogImageAlign returns how the screenshots in the "view blog" render are
+// positioned horizontally: "left" (default), "center", or "right". Any other
+// value is treated as "left".
+func (c *Config) BlogImageAlign() string {
+	if s := strings.TrimSpace(c.Inventory.BlogImageAlign); s != "" {
+		return s
+	}
+	return "left"
+}
+
+// BlogImagePadding returns the edge gap in cells kept for left/right-aligned
+// blog screenshots: 2 (default) when unset, an explicit value clamped to
+// 0..100, and 2 again for a nonsensical (negative) value.
+func (c *Config) BlogImagePadding() int {
+	p := c.Inventory.BlogImagePadding
+	if p == nil {
+		return DefaultBlogImagePadding
+	}
+	v := *p
+	if v < 0 {
+		return DefaultBlogImagePadding
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -543,6 +586,13 @@ const defaultFileText = `# snapshell configuration
   # 100 = full fit when unset (default). Distinct from image_scale_percent,
   # which controls the inventory image card previews.
   # blog_image_scale_percent = 100
+  # Where in the "view blog" render each screenshot sits horizontally:
+  # "left" (default), "center", or "right".
+  # blog_image_align = "left"
+  # How many cells of space to keep between a screenshot and the pane edge
+  # when aligned "left" or "right" (so it isn't glued to the edge). Ignored
+  # for "center". 0 = flush.
+  # blog_image_padding = 2
 
 [blog]
   # Where the caption of an image/code entry sits in blog.md relative to
@@ -614,6 +664,13 @@ func fillDefaults(c *Config) {
 	// "use the default" (100).
 	if c.Inventory.BlogImageScalePercent != nil && *c.Inventory.BlogImageScalePercent <= 0 {
 		c.Inventory.BlogImageScalePercent = nil
+	}
+	if strings.TrimSpace(c.Inventory.BlogImageAlign) == "" {
+		c.Inventory.BlogImageAlign = def.Inventory.BlogImageAlign
+	}
+	// A negative explicit blog_image_padding is treated as unset (default 2).
+	if c.Inventory.BlogImagePadding != nil && *c.Inventory.BlogImagePadding < 0 {
+		c.Inventory.BlogImagePadding = nil
 	}
 	if strings.TrimSpace(c.Blog.CaptionPosition) == "" {
 		c.Blog.CaptionPosition = def.Blog.CaptionPosition
