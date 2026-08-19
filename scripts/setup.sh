@@ -99,25 +99,25 @@ install_deps() {
 
   case "$PM" in
     apt)
-      local PKGS="flameshot zenity libnotify-bin tmux mate-utils"
+      local PKGS="flameshot zenity libnotify-bin tmux mate-utils xclip"
       $SUDO apt-get update || return 1
       $SUDO apt-get install -y $PKGS || return 1
       ;;
     dnf)
-      local PKGS="flameshot zenity libnotify tmux mate-utils"
+      local PKGS="flameshot zenity libnotify tmux mate-utils xclip"
       $SUDO dnf install -y $PKGS || return 1
       ;;
     pacman)
-      local PKGS="flameshot zenity libnotify tmux mate-utils"
+      local PKGS="flameshot zenity libnotify tmux mate-utils xclip"
       $SUDO pacman -S --needed --noconfirm $PKGS || return 1
       ;;
     zypper)
-      local PKGS="flameshot zenity libnotify tmux mate-utils"
+      local PKGS="flameshot zenity libnotify tmux mate-utils xclip"
       $SUDO zypper --non-interactive install $PKGS || return 1
       ;;
     *)
       warn "unsupported distro — install the dependencies manually:"
-      warn "flameshot (or mate-screenshot), zenity, notify-send, tmux"
+      warn "flameshot (or mate-screenshot), zenity, notify-send, tmux, xclip"
       return 0
       ;;
   esac
@@ -128,10 +128,10 @@ if [ "$SKIP_DEPS" -eq 1 ]; then
   info "skipping system dependency install (--skip-deps)"
 elif [ "$(maybe_sudo)" = "" ] && [ "$(id -u)" -ne 0 ]; then
   warn "no root/passwordless sudo available — skipping system dependency install."
-  warn "install these yourself: flameshot/mate-screenshot, zenity, notify-send, tmux."
+  warn "install these yourself: flameshot/mate-screenshot, zenity, notify-send, tmux, xclip."
 elif ! install_deps; then
   warn "system dependency install failed — install the missing tools manually:"
-  warn "  flameshot/mate-screenshot, zenity, notify-send, tmux"
+  warn "  flameshot/mate-screenshot, zenity, notify-send, tmux, xclip"
 fi
 
 info "checking the tools snapshell actually needs..."
@@ -140,7 +140,14 @@ command -v flameshot >/dev/null 2>&1 || command -v mate-screenshot >/dev/null 2>
 command -v zenity >/dev/null 2>&1 \
   || warn "zenity not found — the caption/note window won't open. Install zenity."
 command -v notify-send >/dev/null 2>&1 || warn "notify-send not found — install libnotify-bin (errors will be silent)."
-command -v tmux >/dev/null 2>&1 || warn "tmux not found — Alt+2 (command capture) needs it."
+command -v tmux >/dev/null 2>&1 || warn "tmux not found — Alt+2 will capture only the command line; install tmux for full output."
+command -v xclip >/dev/null 2>&1 || warn "xclip not found — Alt+4 (selected text) needs it."
+
+# Optional tools are checked too, and only reported — they power bonus
+# features that degrade gracefully when absent.
+command -v kitty >/dev/null 2>&1 || warn "kitty not found — in-terminal screenshot preview and blog rendering need it (install kitty)."
+command -v xdotool >/dev/null 2>&1 || warn "xdotool not found — popup positioning ([popup].position) needs it (install xdotool)."
+command -v wmctrl >/dev/null 2>&1 || warn "wmctrl not found — auto-closing the image viewer after a peek needs it (install wmctrl)."
 
 # ---------------------------------------------------------------------------
 # 3. Build + install the binary

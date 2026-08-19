@@ -264,15 +264,15 @@ func TestImageScaleConfig(t *testing.T) {
 	if cfg := load(""); cfg.ImageScale() != 1.0 {
 		t.Fatalf("default ImageScale = %v, want 1.0", cfg.ImageScale())
 	}
-	if cfg := load("[inventory]\nimage_scale_percent = 50\n"); cfg.ImageScale() != 0.5 {
+	if cfg := load("[image]\nimage_scale_percent = 50\n"); cfg.ImageScale() != 0.5 {
 		t.Fatalf("50%% scale = %v, want 0.5", cfg.ImageScale())
 	}
-	if cfg := load("[inventory]\nimage_scale_percent = 33\n"); cfg.ImageScale() != 0.33 {
+	if cfg := load("[image]\nimage_scale_percent = 33\n"); cfg.ImageScale() != 0.33 {
 		t.Fatalf("33%% scale = %v, want 0.33", cfg.ImageScale())
 	}
 	// Out-of-range (0, negative, >100) resolves to the default.
 	for _, v := range []string{"0", "-20", "150"} {
-		if cfg := load("[inventory]\nimage_scale_percent = " + v + "\n"); cfg.ImageScale() != 1.0 {
+		if cfg := load("[image]\nimage_scale_percent = " + v + "\n"); cfg.ImageScale() != 1.0 {
 			t.Fatalf("scale %s should clamp to 1.0, got %v", v, cfg.ImageScale())
 		}
 	}
@@ -296,11 +296,11 @@ func TestImageRenderConfig(t *testing.T) {
 		t.Fatalf("default ImageRender = %q, want tab", cfg.ImageRender())
 	}
 	for body, want := range map[string]string{
-		"[inventory]\n":                              "tab",
-		"[inventory]\nimage_render = \"tab\"\n":      "tab",
-		"[inventory]\nimage_render = \"inline\"\n":   "inline",
-		"[inventory]\nimage_render = \"INLINE\"\n":   "inline",
-		"[inventory]\nimage_render = \"sideways\"\n": "tab",
+		"[image]\n":                              "tab",
+		"[image]\nimage_render = \"tab\"\n":      "tab",
+		"[image]\nimage_render = \"inline\"\n":   "inline",
+		"[image]\nimage_render = \"INLINE\"\n":   "inline",
+		"[image]\nimage_render = \"sideways\"\n": "tab",
 	} {
 		if got := load(body).ImageRender(); got != want {
 			t.Fatalf("ImageRender for %q = %q, want %q", body, got, want)
@@ -328,22 +328,22 @@ func TestImageScaleInlineConfig(t *testing.T) {
 	}
 	// Explicit values are honored up to the 65% cap.
 	for body, want := range map[string]float64{
-		"[inventory]\nimage_scale_percent = 50\n":  0.5,
-		"[inventory]\nimage_scale_percent = 33\n":  0.33,
-		"[inventory]\nimage_scale_percent = 65\n":  0.65,
-		"[inventory]\nimage_scale_percent = 80\n":  0.65,
-		"[inventory]\nimage_scale_percent = 100\n": 0.65,
+		"[image]\nimage_scale_percent = 50\n":  0.5,
+		"[image]\nimage_scale_percent = 33\n":  0.33,
+		"[image]\nimage_scale_percent = 65\n":  0.65,
+		"[image]\nimage_scale_percent = 80\n":  0.65,
+		"[image]\nimage_scale_percent = 100\n": 0.65,
 	} {
 		if got := load(body).ImageScaleInline(); got != want {
 			t.Fatalf("ImageScaleInline for %q = %v, want %v", body, got, want)
 		}
 	}
 	// Explicit 0 is treated as unset (inline default 50).
-	if cfg := load("[inventory]\nimage_scale_percent = 0\n"); cfg.ImageScaleInline() != 0.5 {
+	if cfg := load("[image]\nimage_scale_percent = 0\n"); cfg.ImageScaleInline() != 0.5 {
 		t.Fatalf("ImageScaleInline for 0 = %v, want 0.5", cfg.ImageScaleInline())
 	}
 	// The full-screen (tab) scale is unaffected by the inline cap.
-	if cfg := load("[inventory]\nimage_scale_percent = 80\n"); cfg.ImageScale() != 0.8 {
+	if cfg := load("[image]\nimage_scale_percent = 80\n"); cfg.ImageScale() != 0.8 {
 		t.Fatalf("ImageScale = %v, want 0.8", cfg.ImageScale())
 	}
 }
@@ -367,19 +367,19 @@ func TestBlogImageScaleConfig(t *testing.T) {
 	if cfg := load(""); cfg.BlogImageScale() != 1.0 {
 		t.Fatalf("default BlogImageScale = %v, want 1.0", cfg.BlogImageScale())
 	}
-	if cfg := load("[inventory]\nblog_image_scale_percent = 60\n"); cfg.BlogImageScale() != 0.6 {
+	if cfg := load("[image]\nblog_image_scale_percent = 60\n"); cfg.BlogImageScale() != 0.6 {
 		t.Fatalf("60%% blog scale = %v, want 0.6", cfg.BlogImageScale())
 	}
-	if cfg := load("[inventory]\nblog_image_scale_percent = 50\n"); cfg.BlogImageScale() != 0.5 {
+	if cfg := load("[image]\nblog_image_scale_percent = 50\n"); cfg.BlogImageScale() != 0.5 {
 		t.Fatalf("50%% blog scale = %v, want 0.5", cfg.BlogImageScale())
 	}
 	// image_scale_percent must not leak into the blog scale.
-	if cfg := load("[inventory]\nimage_scale_percent = 50\n"); cfg.BlogImageScale() != 1.0 {
+	if cfg := load("[image]\nimage_scale_percent = 50\n"); cfg.BlogImageScale() != 1.0 {
 		t.Fatalf("image_scale_percent must not affect BlogImageScale, got %v", cfg.BlogImageScale())
 	}
 	// Out-of-range (0, negative, >100) resolves to the default.
 	for _, v := range []string{"0", "-20", "150"} {
-		if cfg := load("[inventory]\nblog_image_scale_percent = " + v + "\n"); cfg.BlogImageScale() != 1.0 {
+		if cfg := load("[image]\nblog_image_scale_percent = " + v + "\n"); cfg.BlogImageScale() != 1.0 {
 			t.Fatalf("blog scale %s should clamp to 1.0, got %v", v, cfg.BlogImageScale())
 		}
 	}
@@ -403,11 +403,11 @@ func TestBlogImageAlignConfig(t *testing.T) {
 		t.Fatalf("default BlogImageAlign = %q, want left", cfg.BlogImageAlign())
 	}
 	for body, want := range map[string]string{
-		"[inventory]\nblog_image_align = \"center\"\n":   "center",
-		"[inventory]\nblog_image_align = \"right\"\n":    "right",
-		"[inventory]\nblog_image_align = \"left\"\n":     "left",
-		"[inventory]\nblog_image_align = \"\"\n":         "left",
-		"[inventory]\nblog_image_align = \"sideways\"\n": "sideways",
+		"[image]\nblog_image_align = \"center\"\n":   "center",
+		"[image]\nblog_image_align = \"right\"\n":    "right",
+		"[image]\nblog_image_align = \"left\"\n":     "left",
+		"[image]\nblog_image_align = \"\"\n":         "left",
+		"[image]\nblog_image_align = \"sideways\"\n": "sideways",
 	} {
 		if got := load(body).BlogImageAlign(); got != want {
 			t.Fatalf("BlogImageAlign for %q = %q, want %q", body, got, want)
@@ -432,17 +432,17 @@ func TestBlogImagePaddingConfig(t *testing.T) {
 	if cfg := load(""); cfg.BlogImagePadding() != 2 {
 		t.Fatalf("default BlogImagePadding = %d, want 2", cfg.BlogImagePadding())
 	}
-	if cfg := load("[inventory]\nblog_image_padding = 0\n"); cfg.BlogImagePadding() != 0 {
+	if cfg := load("[image]\nblog_image_padding = 0\n"); cfg.BlogImagePadding() != 0 {
 		t.Fatalf("explicit 0 padding should stay flush, got %d", cfg.BlogImagePadding())
 	}
-	if cfg := load("[inventory]\nblog_image_padding = 6\n"); cfg.BlogImagePadding() != 6 {
+	if cfg := load("[image]\nblog_image_padding = 6\n"); cfg.BlogImagePadding() != 6 {
 		t.Fatalf("padding 6 = %d, want 6", cfg.BlogImagePadding())
 	}
 	// Negative is nonsensical -> back to the default; oversized clamps.
-	if cfg := load("[inventory]\nblog_image_padding = -4\n"); cfg.BlogImagePadding() != 2 {
+	if cfg := load("[image]\nblog_image_padding = -4\n"); cfg.BlogImagePadding() != 2 {
 		t.Fatalf("negative padding should fall back to 2, got %d", cfg.BlogImagePadding())
 	}
-	if cfg := load("[inventory]\nblog_image_padding = 500\n"); cfg.BlogImagePadding() != 100 {
+	if cfg := load("[image]\nblog_image_padding = 500\n"); cfg.BlogImagePadding() != 100 {
 		t.Fatalf("oversized padding should clamp to 100, got %d", cfg.BlogImagePadding())
 	}
 }
@@ -508,10 +508,14 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2", "[keymaps.inventory]", "quit       = \"q, ctrl+c\"", "up         = \"up, k\"", "down       = \"down, j\"", "page_up    = \"pgup\"", "append     = \"a\"", "caption    = \"c\"", "discard    = \"d\"", "note       = \"n\"", "blog       = \"v\"", "open       = \"enter\"", "submit     = \"ctrl+s\"", "cancel     = \"esc\"", "confirm    = \"y, Y\"", "decline    = \"n, N\""} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "[image]", "image_viewer = \"\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2", "[keymaps.inventory]", "quit       = \"q, ctrl+c\"", "up         = \"up, k\"", "down       = \"down, j\"", "page_up    = \"pgup\"", "append     = \"a\"", "caption    = \"c\"", "discard    = \"d\"", "note       = \"n\"", "blog       = \"v\"", "open       = \"enter\"", "submit     = \"ctrl+s\"", "cancel     = \"esc\"", "confirm    = \"y, Y\"", "decline    = \"n, N\""} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}
+	}
+	// The default file must not advertise the old [inventory] table name.
+	if strings.Contains(string(data), "[inventory]") {
+		t.Fatalf("default file should use [image], not legacy [inventory]:\n%s", data)
 	}
 }
 
@@ -674,7 +678,7 @@ func TestReloadOnHotkeyTrueHonored(t *testing.T) {
 func TestImageModeDefaultsAndResolution(t *testing.T) {
 	// Missing key → default "kitty".
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[inventory]\nimage_viewer = \"feh\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[image]\nimage_viewer = \"feh\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := LoadFrom(path)
@@ -687,7 +691,7 @@ func TestImageModeDefaultsAndResolution(t *testing.T) {
 
 	// Explicit external honored.
 	path = filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[inventory]\nimage_mode = \"external\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[image]\nimage_mode = \"external\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err = LoadFrom(path)
@@ -699,12 +703,50 @@ func TestImageModeDefaultsAndResolution(t *testing.T) {
 	}
 
 	// Case-insensitive and unknown values fall back to kitty.
-	cfg.Inventory.ImageMode = "KITTY"
+	cfg.Image.ImageMode = "KITTY"
 	if got := cfg.ImageMode(); got != "kitty" {
 		t.Fatalf("ImageMode() = %q, want normalized kitty", got)
 	}
-	cfg.Inventory.ImageMode = "bogus"
+	cfg.Image.ImageMode = "bogus"
 	if got := cfg.ImageMode(); got != "kitty" {
 		t.Fatalf("ImageMode() = %q, want kitty for unknown value", got)
+	}
+}
+
+// TestLegacyInventoryTableMerges ensures configs written before the
+// [inventory]→[image] rename keep working: legacy values flow into the new
+// table wherever [image] is silent, and an explicit [image] key wins over a
+// legacy one.
+func TestLegacyInventoryTableMerges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	load := func(body string) *Config {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadFrom(path)
+		if err != nil {
+			t.Fatalf("LoadFrom: %v", err)
+		}
+		return cfg
+	}
+
+	// A pure-legacy file: every image setting still resolves.
+	cfg := load("[inventory]\nimage_mode = \"external\"\nimage_scale_percent = 40\nblog_image_align = \"right\"\n")
+	if cfg.ImageMode() != "external" || cfg.ImageScale() != 0.4 || cfg.BlogImageAlign() != "right" {
+		t.Fatalf("legacy [inventory] must flow through: mode=%q scale=%v align=%q",
+			cfg.ImageMode(), cfg.ImageScale(), cfg.BlogImageAlign())
+	}
+
+	// [image] wins where it sets a value; legacy fills the rest.
+	cfg = load("[image]\nimage_mode = \"kitty\"\n[inventory]\nimage_scale_percent = 40\n")
+	if cfg.ImageMode() != "kitty" || cfg.ImageScale() != 0.4 {
+		t.Fatalf("[image] should win and legacy fill gaps: mode=%q scale=%v", cfg.ImageMode(), cfg.ImageScale())
+	}
+
+	// Legacy viewer + close delay resolve too.
+	cfg = load("[inventory]\nimage_viewer = \"feh\"\nclose_delay_secs = 9\n")
+	if cfg.Image.ImageViewer != "feh" || cfg.CloseDelay() != 9*time.Second {
+		t.Fatalf("legacy viewer/close delay: viewer=%q delay=%v", cfg.Image.ImageViewer, cfg.CloseDelay())
 	}
 }

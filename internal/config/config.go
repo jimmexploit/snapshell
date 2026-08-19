@@ -26,7 +26,12 @@ type Config struct {
 	Paths      PathsConfig      `toml:"paths"`
 	Themes     ThemesConfig     `toml:"themes"`
 	Blog       BlogConfig       `toml:"blog"`
-	Inventory  InventoryConfig  `toml:"inventory"`
+	Image      ImageConfig      `toml:"image"`
+	// Inventory is the legacy name for the image settings table: old config
+	// files used [inventory] for these keys. Read for backward compatibility
+	// and merged into Image wherever [image] leaves a key unset. Never
+	// written out — the default file uses [image].
+	Inventory ImageConfig `toml:"inventory"`
 }
 
 // ScreenshotConfig configures the Alt+1 capture tool.
@@ -165,10 +170,10 @@ const (
 	InventoryDeclineDefault  = "n, N"
 )
 
-// DefaultInventoryCloseDelay is how long the review TUI leaves an image open
+// DefaultImageCloseDelay is how long the review TUI leaves an image open
 // in the external viewer before trying to close it, when close_delay_secs is
 // unset or non-positive.
-const DefaultInventoryCloseDelay = 5
+const DefaultImageCloseDelay = 5
 
 // DefaultImageScalePercent is the default [inventory].image_scale_percent
 // for tab (full-screen) rendering: 100 = the image is rendered as large as
@@ -202,14 +207,15 @@ type BlogConfig struct {
 	CaptionPosition string `toml:"caption_position"`
 }
 
-// InventoryConfig configures the review TUI's screenshot preview
-// (inventory mode).
-type InventoryConfig struct {
+// ImageConfig configures everything about screenshots in the review TUI
+// (inventory mode): the external viewer, the in-terminal kitty rendering,
+// and how screenshots are laid out in the "view blog" render.
+type ImageConfig struct {
 	// ImageViewer is the binary used to open captured screenshots for a
 	// quick look. Empty = the system default (xdg-open).
 	ImageViewer string `toml:"image_viewer"`
 	// CloseDelaySecs is how long an opened image stays on screen before the
-	// TUI best-effort closes it (default DefaultInventoryCloseDelay).
+	// TUI best-effort closes it (default DefaultImageCloseDelay).
 	CloseDelaySecs int `toml:"close_delay_secs"`
 	// ImageMode selects how Enter on an image card shows the screenshot:
 	// "kitty" renders it full-screen inside the terminal (kitty only, falls
@@ -346,7 +352,7 @@ func Default() *Config {
 		Paths:      PathsConfig{SessionRoot: "~/.local/share/snapshell"},
 		Themes:     ThemesConfig{},
 		Blog:       BlogConfig{CaptionPosition: "above"},
-		Inventory:  InventoryConfig{CloseDelaySecs: DefaultInventoryCloseDelay, ImageMode: "kitty", ImageRender: "tab"},
+		Image:      ImageConfig{CloseDelaySecs: DefaultImageCloseDelay, ImageMode: "kitty", ImageRender: "tab"},
 	}
 }
 
@@ -388,9 +394,9 @@ func (c *Config) CaptionAfter() bool {
 // CloseDelay returns how long the review TUI leaves an opened image on
 // screen before best-effort closing it (default 5s).
 func (c *Config) CloseDelay() time.Duration {
-	secs := c.Inventory.CloseDelaySecs
+	secs := c.Image.CloseDelaySecs
 	if secs <= 0 {
-		secs = DefaultInventoryCloseDelay
+		secs = DefaultImageCloseDelay
 	}
 	return time.Duration(secs) * time.Second
 }
@@ -400,7 +406,7 @@ func (c *Config) CloseDelay() time.Duration {
 // "external" opens them in the configured image viewer. Unknown or empty
 // values resolve to "kitty".
 func (c *Config) ImageMode() string {
-	mode := strings.ToLower(strings.TrimSpace(c.Inventory.ImageMode))
+	mode := strings.ToLower(strings.TrimSpace(c.Image.ImageMode))
 	if mode != "kitty" && mode != "external" {
 		mode = "kitty"
 	}
@@ -412,7 +418,7 @@ func (c *Config) ImageMode() string {
 // the preview pane for the selected image card. Unknown or empty values
 // resolve to "tab".
 func (c *Config) ImageRender() string {
-	mode := strings.ToLower(strings.TrimSpace(c.Inventory.ImageRender))
+	mode := strings.ToLower(strings.TrimSpace(c.Image.ImageRender))
 	if mode != "tab" && mode != "inline" {
 		mode = "tab"
 	}
@@ -425,7 +431,7 @@ func (c *Config) ImageRender() string {
 // kept. An unset key or a percent outside the sane 1..100 range resolves to
 // the default 100 (multiplier 1.0).
 func (c *Config) ImageScale() float64 {
-	pct := c.Inventory.ImageScalePercent
+	pct := c.Image.ImageScalePercent
 	if pct == nil {
 		return 1
 	}
@@ -441,7 +447,7 @@ func (c *Config) ImageScale() float64 {
 // an unset key defaults to 50% of the pane fit, an explicit value is used
 // as-is up to MaxInlineImageScalePercent (65%), beyond which it is clamped.
 func (c *Config) ImageScaleInline() float64 {
-	pct := c.Inventory.ImageScalePercent
+	pct := c.Image.ImageScalePercent
 	if pct == nil {
 		return 0.5
 	}
@@ -465,7 +471,7 @@ func (c *Config) ImageScaleInline() float64 {
 // The aspect ratio is always kept. An unset key or a percent outside the
 // sane 1..100 range resolves to the default 100 (multiplier 1.0).
 func (c *Config) BlogImageScale() float64 {
-	pct := c.Inventory.BlogImageScalePercent
+	pct := c.Image.BlogImageScalePercent
 	if pct == nil {
 		return 1
 	}
@@ -480,7 +486,7 @@ func (c *Config) BlogImageScale() float64 {
 // positioned horizontally: "left" (default), "center", or "right". Any other
 // value is treated as "left".
 func (c *Config) BlogImageAlign() string {
-	if s := strings.TrimSpace(c.Inventory.BlogImageAlign); s != "" {
+	if s := strings.TrimSpace(c.Image.BlogImageAlign); s != "" {
 		return s
 	}
 	return "left"
@@ -490,7 +496,7 @@ func (c *Config) BlogImageAlign() string {
 // blog screenshots: 2 (default) when unset, an explicit value clamped to
 // 0..100, and 2 again for a nonsensical (negative) value.
 func (c *Config) BlogImagePadding() int {
-	p := c.Inventory.BlogImagePadding
+	p := c.Image.BlogImagePadding
 	if p == nil {
 		return DefaultBlogImagePadding
 	}
@@ -566,14 +572,52 @@ func LoadFrom(path string) (*Config, error) {
 		return nil, fmt.Errorf("stat config %s: %v", path, err)
 	}
 
-	if _, err := toml.DecodeFile(path, cfg); err != nil {
+	meta, err := toml.DecodeFile(path, cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parse config %s: %v", path, err)
 	}
 
+	mergeLegacyImage(cfg, meta)
 	fillDefaults(cfg)
 	normalizeKeepRatio(cfg)
 	expandCfg(cfg)
 	return cfg, nil
+}
+
+// mergeLegacyImage migrates the old [inventory] image table onto [image].
+// Configs written before the rename put the image settings under [inventory];
+// the [image] table wins wherever it explicitly sets a value, and any
+// leftover legacy values fill in what [image] left unset — so an old config
+// keeps working byte-for-byte without the user touching it. meta tells us
+// which [image] keys were actually present in the file (as opposed to still
+// at their Default() value after decode).
+func mergeLegacyImage(c *Config, meta toml.MetaData) {
+	legacy := c.Inventory
+	img := &c.Image
+	if !meta.IsDefined("image", "image_viewer") {
+		img.ImageViewer = legacy.ImageViewer
+	}
+	if !meta.IsDefined("image", "close_delay_secs") {
+		img.CloseDelaySecs = legacy.CloseDelaySecs
+	}
+	if !meta.IsDefined("image", "image_mode") {
+		img.ImageMode = legacy.ImageMode
+	}
+	if !meta.IsDefined("image", "image_render") {
+		img.ImageRender = legacy.ImageRender
+	}
+	if !meta.IsDefined("image", "image_scale_percent") {
+		img.ImageScalePercent = legacy.ImageScalePercent
+	}
+	if !meta.IsDefined("image", "blog_image_scale_percent") {
+		img.BlogImageScalePercent = legacy.BlogImageScalePercent
+	}
+	if !meta.IsDefined("image", "blog_image_align") {
+		img.BlogImageAlign = legacy.BlogImageAlign
+	}
+	if !meta.IsDefined("image", "blog_image_padding") {
+		img.BlogImagePadding = legacy.BlogImagePadding
+	}
 }
 
 // ResetDefault backs up the current config file (if any) to <path>.bak and
@@ -621,7 +665,20 @@ func writeDefault(path string) error {
 
 // defaultFileText is the commented-on-disk form of Default().
 const defaultFileText = `# snapshell configuration
-# paths below are relative to your home unless absolute
+#
+# This file is created automatically on first use. Every key below is
+# optional — delete a line and its default kicks in. Paths are relative to
+# your home unless absolute.
+#
+# Sections:
+#   [screenshot]        how screenshots are taken (Alt+1)
+#   [popup]             the caption/note dialog window
+#   [capture]           how commands are captured (Alt+2)
+#   [keymaps]           all hotkeys — global + review-TUI keys
+#   [image]             how screenshots look in the review TUI and blog render
+#   [blog]              how entries are written to blog.md
+#   [paths]             where sessions are stored
+#   [themes]            GTK theme for the popup
 
 [screenshot]
   tool = "flameshot"        # "flameshot" or "mate-screenshot"
@@ -692,6 +749,48 @@ const defaultFileText = `# snapshell configuration
   confirm    = "y, Y"       # yes to the discard prompt
   decline    = "n, N"       # no to the discard prompt
 
+[image]
+  # Everything about how screenshots are shown in the review TUI and in the
+  # "view blog" render.
+  #
+  # External viewer for peeking at a screenshot (Enter on an image card).
+  # Empty = the system default (xdg-open). Set it to a viewer like "feh"
+  # for a guaranteed auto-close.
+  image_viewer = ""
+  # Seconds an opened image stays up before the TUI best-effort closes it
+  # (0 = 5). Auto-close may not fire for default viewers that hand the
+  # image to an already-running instance.
+  close_delay_secs = 5
+  # How Enter on an image card shows the screenshot: "kitty" renders it
+  # full-screen inside the terminal (requires running the TUI in kitty;
+  # falls back to the external viewer otherwise), "external" opens it in
+  # image_viewer.
+  image_mode = "kitty"
+  # Where the in-terminal screenshot is shown: "tab" opens it full-screen on
+  # Enter (default), "inline" renders it right in the preview pane for the
+  # selected image card — no Enter needed (Enter still zooms full-screen).
+  image_render = "tab"
+  # In-terminal image size, as a percentage of the size that would exactly
+  # fit the pane. Tab mode: 100 = full fit when unset. Inline mode: unset =
+  # 50% of the pane fit, and the value never exceeds 65%. The aspect ratio
+  # is always preserved. Ignored in "external" mode.
+  # image_scale_percent = 60
+  # The "view blog" render (press the blog key inside the review TUI):
+  #   - how large each screenshot is drawn, as % of the pane fit
+  #     (100 = full fit when unset);
+  #   - where it sits horizontally: "left" (default), "center", "right";
+  #   - how many cells of space to keep from the pane edge when aligned
+  #     "left" or "right" (so it isn't glued to the edge; 0 = flush).
+  # blog_image_scale_percent = 100
+  # blog_image_align = "left"
+  # blog_image_padding = 2
+
+[blog]
+  # Where the caption of an image/code entry sits in blog.md relative to
+  # the image/code block: "above" (default) or "below". Note entries have
+  # no caption and ignore this.
+  caption_position = "above"
+
 [paths]
   # Where session folders (and their blog.md + attachments/) are stored.
   # "~/.local/share/snapshell" is the default (always writable); you can
@@ -707,49 +806,6 @@ const defaultFileText = `# snapshell configuration
   # outside the standard locations (/usr/share/themes, ~/.themes,
   # ~/.local/share/themes). Empty = standard locations only.
   root = ""
-
-[inventory]
-  # Inventory mode: captures land silently in a pending queue reviewed in
-  # 'snapshell inventory'. Image viewer used to peek at a captured
-  # screenshot from the review TUI (Enter on an image card). Empty = the
-  # system default (xdg-open). Set it to a viewer like "feh" for a
-  # guaranteed auto-close.
-  image_viewer = ""
-  # Seconds an opened image stays up before the TUI best-effort closes it
-  # (0 = 5). Auto-close may not fire for default viewers that hand the
-  # image to an already-running instance.
-  close_delay_secs = 5
-  # How Enter on an image card shows the screenshot: "kitty" renders it
-  # full-screen inside the terminal (requires running in kitty; falls back
-  # to the external viewer otherwise), "external" opens it in image_viewer.
-  image_mode = "kitty"
-  # Where the in-terminal screenshot is shown: "tab" opens it full-screen on
-  # Enter (default), "inline" renders it right in the preview pane for the
-  # selected image card — no Enter needed (Enter still zooms full-screen).
-  image_render = "tab"
-  # How large the in-terminal image is rendered, as a percentage of the size
-  # that would exactly fit the pane. Tab mode: 100 = full fit when unset.
-  # Inline mode: unset = 50% of the pane fit, and the value never exceeds
-  # 65%. The aspect ratio is always preserved. Ignored in "external" mode.
-  # image_scale_percent = 60
-  # How large the screenshots embedded in the "view blog" render are drawn,
-  # as a percentage of the size that would exactly fit the render pane.
-  # 100 = full fit when unset (default). Distinct from image_scale_percent,
-  # which controls the inventory image card previews.
-  # blog_image_scale_percent = 100
-  # Where in the "view blog" render each screenshot sits horizontally:
-  # "left" (default), "center", or "right".
-  # blog_image_align = "left"
-  # How many cells of space to keep between a screenshot and the pane edge
-  # when aligned "left" or "right" (so it isn't glued to the edge). Ignored
-  # for "center". 0 = flush.
-  # blog_image_padding = 2
-
-[blog]
-  # Where the caption of an image/code entry sits in blog.md relative to
-  # the image/code block: "above" (default) or "below". Note entries have
-  # no caption and ignore this.
-  caption_position = "above"
 `
 
 // fillDefaults replaces empty/zero values with the built-in defaults.
@@ -842,31 +898,31 @@ func fillDefaults(c *Config) {
 	if strings.TrimSpace(c.Paths.SessionRoot) == "" {
 		c.Paths.SessionRoot = def.Paths.SessionRoot
 	}
-	if c.Inventory.CloseDelaySecs <= 0 {
-		c.Inventory.CloseDelaySecs = def.Inventory.CloseDelaySecs
+	if c.Image.CloseDelaySecs <= 0 {
+		c.Image.CloseDelaySecs = def.Image.CloseDelaySecs
 	}
-	if strings.TrimSpace(c.Inventory.ImageMode) == "" {
-		c.Inventory.ImageMode = def.Inventory.ImageMode
+	if strings.TrimSpace(c.Image.ImageMode) == "" {
+		c.Image.ImageMode = def.Image.ImageMode
 	}
-	if strings.TrimSpace(c.Inventory.ImageRender) == "" {
-		c.Inventory.ImageRender = def.Inventory.ImageRender
+	if strings.TrimSpace(c.Image.ImageRender) == "" {
+		c.Image.ImageRender = def.Image.ImageRender
 	}
 	// A non-positive explicit image_scale_percent is treated as unset so the
 	// per-mode defaults (tab 100, inline 50) apply.
-	if c.Inventory.ImageScalePercent != nil && *c.Inventory.ImageScalePercent <= 0 {
-		c.Inventory.ImageScalePercent = nil
+	if c.Image.ImageScalePercent != nil && *c.Image.ImageScalePercent <= 0 {
+		c.Image.ImageScalePercent = nil
 	}
 	// Same for blog_image_scale_percent: a non-positive explicit value means
 	// "use the default" (100).
-	if c.Inventory.BlogImageScalePercent != nil && *c.Inventory.BlogImageScalePercent <= 0 {
-		c.Inventory.BlogImageScalePercent = nil
+	if c.Image.BlogImageScalePercent != nil && *c.Image.BlogImageScalePercent <= 0 {
+		c.Image.BlogImageScalePercent = nil
 	}
-	if strings.TrimSpace(c.Inventory.BlogImageAlign) == "" {
-		c.Inventory.BlogImageAlign = def.Inventory.BlogImageAlign
+	if strings.TrimSpace(c.Image.BlogImageAlign) == "" {
+		c.Image.BlogImageAlign = def.Image.BlogImageAlign
 	}
 	// A negative explicit blog_image_padding is treated as unset (default 2).
-	if c.Inventory.BlogImagePadding != nil && *c.Inventory.BlogImagePadding < 0 {
-		c.Inventory.BlogImagePadding = nil
+	if c.Image.BlogImagePadding != nil && *c.Image.BlogImagePadding < 0 {
+		c.Image.BlogImagePadding = nil
 	}
 	if strings.TrimSpace(c.Blog.CaptionPosition) == "" {
 		c.Blog.CaptionPosition = def.Blog.CaptionPosition

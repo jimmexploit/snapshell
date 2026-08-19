@@ -20,15 +20,37 @@ import (
 type dependency struct {
 	bin string
 	pkg string
+	// optional tools are not installed by the setup wizard (and missing ones
+	// are reported as "recommended", not "required"): each powers a
+	// non-core feature that degrades gracefully when absent.
+	optional bool
 }
 
-var depsList = []dependency{
+// Required tools: without these the core flows break and the error messages
+// name them anyway, so the wizard offers to install them.
+var requiredDeps = []dependency{
 	{bin: "flameshot", pkg: "flameshot"},
 	{bin: "mate-screenshot", pkg: "mate-utils"},
 	{bin: "zenity", pkg: "zenity"},
-	{bin: "tmux", pkg: "tmux"},
 	{bin: "notify-send", pkg: "libnotify-bin"},
 	{bin: "xclip", pkg: "xclip"},
+}
+
+// Optional tools: each unlocks a non-core feature and is only reported, so
+// the user decides whether to install it.
+var optionalDeps = []dependency{
+	// tmux: full command+output capture for Alt+2 (everything else works
+	// without it; Alt+2 then captures just the command line).
+	{bin: "tmux", pkg: "tmux", optional: true},
+	// kitty: in-terminal rendering of screenshots (review TUI + "view blog")
+	// and full-output capture of commands typed in a plain kitty window.
+	{bin: "kitty", pkg: "kitty", optional: true},
+	// xdotool: positioning the caption popup at a configured [popup].position.
+	{bin: "xdotool", pkg: "xdotool", optional: true},
+	// wmctrl: reliably closing the external image viewer after a peek.
+	{bin: "wmctrl", pkg: "wmctrl", optional: true},
+	// fc-list (fontconfig): listing fonts for [popup].font via list-fonts.
+	{bin: "fc-list", pkg: "fontconfig", optional: true},
 }
 
 func newSetupCmd() *cobra.Command {
@@ -52,7 +74,7 @@ func runSetup(r io.Reader) error {
 	fmt.Println("This only needs to happen once. Re-run it any time with `snapshell setup`.")
 
 	// 1. Dependencies.
-	missing := missingDeps(exec.LookPath)
+	missing := missingDeps(exec.LookPath, requiredDeps)
 	if len(missing) == 0 {
 		fmt.Println("\n[1/3] Dependencies: all required tools are already installed.")
 	} else {
@@ -79,6 +101,20 @@ func runSetup(r io.Reader) error {
 		} else {
 			fmt.Println(" Skipping. Install them later and re-run `snapshell setup`.")
 		}
+	}
+
+	// Optional tools are reported, never installed behind the user's back.
+	var optionalMissing []string
+	for _, d := range optionalDeps {
+		if _, err := exec.LookPath(d.bin); err != nil {
+			optionalMissing = append(optionalMissing, fmt.Sprintf("%s (%s)", d.bin, d.pkg))
+		}
+	}
+	if len(optionalMissing) > 0 {
+		fmt.Printf("\n[1/3] Optional tools not found (each unlocks a bonus feature, install if you want it): %s.\n",
+			strings.Join(optionalMissing, ", "))
+	} else {
+		fmt.Println("\n[1/3] Optional tools: all present.")
 	}
 
 	// 2. Shell hook (needed for Alt+2 command capture).
@@ -178,9 +214,9 @@ func ask(br *bufio.Reader, prompt string, def bool) (bool, error) {
 // missingDeps returns the dependencies not found on PATH. Only one
 // screenshot tool is required, so a missing fallback is not reported when
 // the other is installed.
-func missingDeps(lookup func(string) (string, error)) []dependency {
+func missingDeps(lookup func(string) (string, error), deps []dependency) []dependency {
 	haveScreenshot := false
-	for _, d := range depsList {
+	for _, d := range deps {
 		if isScreenshotDep(d) {
 			if _, err := lookup(d.bin); err == nil {
 				haveScreenshot = true
@@ -188,7 +224,7 @@ func missingDeps(lookup func(string) (string, error)) []dependency {
 		}
 	}
 	var missing []dependency
-	for _, d := range depsList {
+	for _, d := range deps {
 		if _, err := lookup(d.bin); err != nil {
 			if isScreenshotDep(d) && haveScreenshot {
 				continue

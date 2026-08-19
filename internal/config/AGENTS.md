@@ -71,34 +71,39 @@ caption_position = "above"  # where the caption of an image/code entry sits
                             # in blog.md: "above" (default) or "below";
                             # note entries have no caption and ignore it
 
-[inventory]
+[image]
 image_viewer = ""           # binary for peeking at screenshots ("feh", ...)
                             # "" = xdg-open
 close_delay_secs = 5        # seconds an opened image stays up before
                             # best-effort close (0 = 5)
- image_mode = "kitty"        # "kitty" = render in-terminal (full-screen,
-                             # falls back to external), "external" = viewer
- image_render = "tab"        # "tab" = in-terminal screenshot opens full-screen
-                             # on Enter (default); "inline" = rendered right
-                             # in the preview pane for the selected image
-                             # card, no Enter needed (Enter still zooms)
- image_scale_percent = 60    # in-terminal image size as % of the pane fit.
-                             # A *int: UNSET = per-mode default (tab 100,
-                             # inline 50) and inline is hard-capped at 65%;
-                             # explicit values are clamped to 1..100 and
-                             # inline never exceeds 65. External ignores.
- blog_image_scale_percent = 100 # how large screenshots embedded in the
-                             # "view blog" render are drawn, as % of the pane
-                             # fit (100 = full fit when unset; distinct from
-                             # image_scale_percent, which governs the image
-                             # card previews). Explicit values clamp to 1..100.
- blog_image_align = "left"   # horizontal position of each screenshot in the
-                             # "view blog" render: "left" (default), "center",
-                             # or "right". Ignored by the image card previews.
- blog_image_padding = 2      # edge gap in cells kept for left/right-aligned
-                             # blog screenshots (so they aren't glued to the
-                             # edge). 0 = flush. Ignored for "center" and by
-                             # the image card previews.
+image_mode = "kitty"        # "kitty" = render in-terminal (full-screen,
+                            # falls back to external), "external" = viewer
+image_render = "tab"        # "tab" = in-terminal screenshot opens full-screen
+                            # on Enter (default); "inline" = rendered right
+                            # in the preview pane for the selected image
+                            # card, no Enter needed (Enter still zooms)
+image_scale_percent = 60    # in-terminal image size as % of the pane fit.
+                            # A *int: UNSET = per-mode default (tab 100,
+                            # inline 50) and inline is hard-capped at 65%;
+                            # explicit values are clamped to 1..100 and
+                            # inline never exceeds 65. External ignores.
+blog_image_scale_percent = 100 # how large screenshots embedded in the
+                            # "view blog" render are drawn, as % of the pane
+                            # fit (100 = full fit when unset; distinct from
+                            # image_scale_percent, which governs the image
+                            # card previews). Explicit values clamp to 1..100.
+blog_image_align = "left"   # horizontal position of each screenshot in the
+                            # "view blog" render: "left" (default), "center",
+                            # or "right". Ignored by the image card previews.
+blog_image_padding = 2      # edge gap in cells kept for left/right-aligned
+                            # blog screenshots (so they aren't glued to the
+                            # edge). 0 = flush. Ignored for "center" and by
+                            # the image card previews.
+
+# NOTE: configs written before the [inventory]→[image] rename used the
+# [inventory] table for these keys. Load() merges those legacy values into
+# [image] wherever the new table is silent (mergeLegacyImage), so old configs
+# keep working untouched. The default file and this schema use [image] only.
 ```
 
 ## Behavior
@@ -135,6 +140,11 @@ close_delay_secs = 5        # seconds an opened image stays up before
   strings onto `tui.Keys`; the TUI package owns the key-handling and its own
   `DefaultKeys()` fallback. `ctrl+c` always quits the TUI in every state and
   is deliberately not part of any binding list.
+- **The image settings live under `[image]`** (formerly `[inventory]`).
+  `mergeLegacyImage` runs during load and folds any legacy `[inventory]`
+  values into `[image]` wherever the new table did not explicitly set them
+  (checked via the TOML metadata, since `Default()` pre-fills `Image` before
+  the file is decoded). The default file writes `[image]` only.
 - **`keep_ratio` is applied at load time** (`normalizeKeepRatio`): when on
   (default), exactly one dimension changed away from the default
   (`DefaultPopupWidth` 560 / `DefaultPopupHeight` 320) makes the other

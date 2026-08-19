@@ -58,18 +58,18 @@ func TestAskInvalidReprompts(t *testing.T) {
 func TestMissingDeps(t *testing.T) {
 	// Everything present.
 	found := func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	if got := missingDeps(found); len(got) != 0 {
+	if got := missingDeps(found, requiredDeps); len(got) != 0 {
 		t.Fatalf("all present, got missing %v", got)
 	}
 
 	// Nothing present: both screenshot options reported.
 	none := func(name string) (string, error) { return "", os.ErrNotExist }
-	got := missingDeps(none)
+	got := missingDeps(none, requiredDeps)
 	names := []string{}
 	for _, d := range got {
 		names = append(names, d.bin)
 	}
-	for _, want := range []string{"flameshot", "mate-screenshot", "zenity", "tmux", "notify-send", "xclip"} {
+	for _, want := range []string{"flameshot", "mate-screenshot", "zenity", "notify-send", "xclip"} {
 		found := false
 		for _, n := range names {
 			if n == want {
@@ -88,13 +88,23 @@ func TestMissingDeps(t *testing.T) {
 		}
 		return "", os.ErrNotExist
 	}
-	got = missingDeps(onlyFlameshot)
+	got = missingDeps(onlyFlameshot, requiredDeps)
 	for _, d := range got {
 		if d.bin == "mate-screenshot" {
 			t.Fatalf("mate-screenshot fallback should not be reported when flameshot is installed: %v", got)
 		}
 		if d.bin == "flameshot" {
 			t.Fatalf("flameshot should not be missing: %v", got)
+		}
+	}
+
+	// Optional tools are not part of the required set: nothing the wizard
+	// installs by default should overlap with a bonus feature.
+	for _, opt := range optionalDeps {
+		for _, req := range requiredDeps {
+			if opt.bin == req.bin {
+				t.Fatalf("%s listed as both optional and required", opt.bin)
+			}
 		}
 	}
 }
