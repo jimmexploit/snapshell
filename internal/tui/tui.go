@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	bubbleskey "github.com/charmbracelet/bubbles/key"
@@ -134,6 +135,12 @@ type model struct {
 	renderer      *glamour.TermRenderer
 	renderWidth   int
 
+	// previewRenderer renders the caption/note markdown previews. It wraps
+	// at construction time (like renderer), so it is cached per width and
+	// rebuilt on resize and on the typing debounce.
+	previewRenderer    *glamour.TermRenderer
+	previewRenderWidth int
+
 	status    string
 	statusErr bool
 }
@@ -187,6 +194,38 @@ func bindWordKeys(km *textarea.KeyMap) {
 		bubbleskey.WithKeys("alt+right", "alt+f", "ctrl+right"),
 		bubbleskey.WithHelp("alt+right / ctrl+right", "word forward"),
 	)
+}
+
+// ensurePreviewRenderer builds the markdown renderer for the caption/note
+// previews when it is missing or was constructed for a different width
+// (glamour wraps at construction time). Pick dark/light from the terminal's
+// actual background, like the blog renderer.
+func (m *model) ensurePreviewRenderer(w int) {
+	if m.previewRenderer != nil && m.previewRenderWidth == w {
+		return
+	}
+	style := "dark"
+	if !lipgloss.HasDarkBackground() {
+		style = "light"
+	}
+	if r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(w)); err == nil {
+		m.previewRenderer = r
+		m.previewRenderWidth = w
+	}
+}
+
+// mdPreview renders markdown preview text at width w so the user sees the
+// rendered result (bullet lists, bold, code blocks, …) instead of raw
+// markup. Falls back to plain word-wrapped text when no renderer is cached
+// for this width (e.g. before the first debounce after a resize) or glamour
+// fails.
+func (m model) mdPreview(s string, w int) string {
+	if m.previewRenderer != nil && m.previewRenderWidth == w {
+		if out, err := m.previewRenderer.Render(s); err == nil {
+			return strings.TrimSuffix(out, "\n")
+		}
+	}
+	return wrapText(s, w)
 }
 
 // Init primes the UI with the current queue and starts polling.
@@ -254,6 +293,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Re-render the markdown at the new width.
 			return m, m.refreshRender()
 		}
+		// The preview renderers wrap at construction time; drop them so the
+		// next debounce rebuilds at the new width.
+		m.previewRenderer = nil
+		m.previewRenderWidth = 0
+		if m.inputActive() {
+			w := m.width
+			if m.st == stateCaption {
+				w, _, _ = m.paneDims()
+			}
+			m.ensurePreviewRenderer(w)
+		}
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -278,6 +328,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Debounced live preview: only after the user pauses typing.
 		m.captionPreview = m.caption.Value()
 		m.notePreview = m.note.Value()
+		w := m.width
+		if m.st == stateCaption {
+			w, _, _ = m.paneDims()
+		}
+		m.ensurePreviewRenderer(w)
 		return m, nil
 	case renderMsg:
 		if msg.err != nil {

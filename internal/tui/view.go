@@ -269,7 +269,7 @@ func (m model) captionPane(w, h int) string {
 		return fillPane(strings.Join(lines, "\n"), w, h)
 	}
 	lines = append(lines, titleStyle.Render("Preview"))
-	lines = append(lines, wrapText(m.captionPreviewText(c), w))
+	lines = append(lines, m.mdPreview(m.captionPreviewText(c), w))
 	return fillPane(strings.Join(lines, "\n"), w, h)
 }
 
@@ -303,7 +303,7 @@ func (m model) notePane() string {
 	if strings.TrimSpace(m.notePreview) == "" {
 		lines = append(lines, dimStyle.Render("(nothing written yet — Ctrl+S saves, Esc cancels)"))
 	} else {
-		lines = append(lines, wrapText(m.notePreview, m.width))
+		lines = append(lines, m.mdPreview(m.notePreview, m.width))
 	}
 	return fillPane(strings.Join(lines, "\n"), m.width, paneH)
 }

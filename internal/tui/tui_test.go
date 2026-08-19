@@ -634,6 +634,47 @@ func TestInlineImageRowsScale(t *testing.T) {
 	}
 }
 
+func TestCaptionNotePreviewRendersMarkdown(t *testing.T) {
+	cards := []inventory.Card{
+		{ID: 1, Kind: inventory.KindCode, Text: "whoami", Created: time.Now()},
+	}
+	m, _ := setupModel(t, cards)
+	m = step(t, m, m.refreshList())
+	m, _ = upd(t, m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	// Caption state: let the debounce fire so the preview renderer is built,
+	// then preview a markdown list and confirm it renders as bullets.
+	m, _ = upd(t, m, key("c"))
+	if m.st != stateCaption {
+		t.Fatalf("expected stateCaption after c, got %d", m.st)
+	}
+	m, _ = upd(t, m, debounceMsg{})
+	m.captionPreview = "- enumerate the ports\n- check the service versions"
+	view := m.View()
+	if !strings.Contains(view, "•") {
+		t.Fatalf("caption preview should render markdown bullets:\n%q", view)
+	}
+	if strings.Contains(view, "- enumerate") {
+		t.Fatalf("caption preview should not show the raw markdown dash:\n%q", view)
+	}
+
+	// Note state: same markdown rendering in the standalone note preview.
+	m, _ = upd(t, m, key("esc"))
+	m, _ = upd(t, m, key("n"))
+	if m.st != stateNote {
+		t.Fatalf("expected stateNote after n, got %d", m.st)
+	}
+	m, _ = upd(t, m, debounceMsg{})
+	m.notePreview = "## Findings\n- open port 22"
+	view = m.View()
+	if !strings.Contains(view, "•") {
+		t.Fatalf("note preview should render markdown bullets:\n%q", view)
+	}
+	if strings.Contains(view, "- open port") {
+		t.Fatalf("note preview should not show the raw markdown dash:\n%q", view)
+	}
+}
+
 func TestCtrlArrowWordMovement(t *testing.T) {
 	cards := []inventory.Card{
 		{ID: 1, Kind: inventory.KindCode, Text: "whoami", Created: time.Now()},
