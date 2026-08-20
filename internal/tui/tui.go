@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
+	"snapshell/internal/blog"
 	"snapshell/internal/inventory"
 )
 
@@ -143,8 +144,11 @@ type model struct {
 	notePreview    string
 
 	// detailContent tracks what the detail viewport currently shows so a
-	// poll refresh doesn't reset the user's scroll position.
+	// poll refresh doesn't reset the user's scroll position. detailRaw is
+	// the uncolored card text that produced it, so unchanged content skips
+	// re-highlighting on every poll.
 	detailContent string
+	detailRaw     string
 	detailVP      viewport.Model
 
 	renderContent   string
@@ -433,13 +437,18 @@ func (m *model) clampSel() {
 }
 
 // setDetailContent keeps the detail viewport in sync with the selected card,
-// without resetting scroll when the same card is still selected.
+// without resetting scroll when the same card is still selected. Code cards
+// are syntax-highlighted (matching the glamour palette) so the preview reads
+// like the rendered blog.
 func (m *model) setDetailContent() {
 	content := ""
+	raw := ""
 	if len(m.cards) > 0 && m.cards[m.sel].Kind == inventory.KindCode {
-		content = m.cards[m.sel].Text
+		raw = m.cards[m.sel].Text
+		content = highlightCode(raw, blog.DetectLang(raw))
 	}
-	if content != m.detailContent {
+	if raw != m.detailRaw {
+		m.detailRaw = raw
 		m.detailContent = content
 		m.detailVP.SetContent(content)
 		m.detailVP.GotoTop()
