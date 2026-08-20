@@ -3,6 +3,8 @@ package blog
 import (
 	"regexp"
 	"strings"
+
+	"github.com/go-enry/go-enry/v2"
 )
 
 // DetectLang inspects captured text and returns the language tag for its
@@ -10,24 +12,26 @@ import (
 // from raw source code, so Alt+2 captures read as shell sessions while
 // Alt+4 selections of an actual file get the file's language.
 //
-// Heuristics, in order:
+// Detection order:
 //
 //   - a strong shell prompt line (powerline box chars, `$ `, `❯ `, `➜ `,
 //     `> `, or a zsh `% `) anywhere in the text → "bash"
-//   - a `#!` shebang on the first line names the interpreter (python,
-//     bash/sh, node, perl, ruby, ...)
-//   - Go source: a `package X` line plus a `func`/`type`/`var`/`const`
-//     declaration → "go"
-//   - Python source: lines starting with `def`/`class`/`import`/`from`,
-//     or an `if __name__ == "__main__"` guard → "python"
-//   - YAML: a `---` document marker or a leading `key: value` line → "yaml"
-//   - JSON: text that starts with `{`/`[` and ends with the matching
-//     bracket → "json"
-//   - HTML: `<!DOCTYPE` or `<html` → "html"
-//   - TOML: a `[section]` header plus a `key = value` line → "toml"
-//   - a `# ` root-shell prompt (checked last, because `# comment` lines in
+//   - go-enry (`github.com/go-enry/go-enry/v2`) identifies the language
+//     from the content (shebangs, modelines, known file signatures);
+//     shell-family results are normalized to "bash"
+//   - a `#!` shebang on the first line that enry didn't map (an unusual
+//     interpreter) names the language
+//   - content heuristics for the languages a bare snippet (no filename)
+//     needs: Go, Python (including `for ... in ...:` loops), YAML, JSON,
+//     HTML, TOML — enry is filename/extension-driven, so a pasted snippet
+//     without a filename leans on these
+//   - a `# ` root-shell prompt (checked late, because `# comment` lines in
 //     source code look identical) → "bash"
-//   - anything else → "text"
+//   - anything else → "bash": an Alt+2/Alt+4 capture is a shell command at
+//     heart, and a bash fence is what makes every markdown viewer (the
+//     review previews, the blog view, external editors) syntax-color the
+//     block. Prose gets labeled bash too, which renders near-flat in the
+//     bash palette — the fence frame and any command-ish tokens still show.
 func DetectLang(text string) string {
 	t := strings.TrimSpace(text)
 	if t == "" {
@@ -38,6 +42,9 @@ func DetectLang(text string) string {
 
 	if hasStrongPrompt(lines) {
 		return "bash"
+	}
+	if lang := enry.GetLanguage("", []byte(t)); lang != "" {
+		return normalizeLang(lang)
 	}
 	if shebang := shebangLang(lines[0]); shebang != "" {
 		return shebang
@@ -59,7 +66,19 @@ func DetectLang(text string) string {
 	case hasRootPrompt(lines):
 		return "bash"
 	}
-	return "text"
+	return "bash"
+}
+
+// normalizeLang converts an enry language name (Linguist naming) into a
+// lowercase fence tag. Shell-family results all land in "bash" — a pentest
+// blog's shell captures are bash sessions, whatever the exact interpreter.
+func normalizeLang(lang string) string {
+	switch strings.ToLower(lang) {
+	case "shell", "bash", "zsh", "fish", "csh", "tcsh", "ksh", "dash", "ash":
+		return "bash"
+	default:
+		return strings.ToLower(lang)
+	}
 }
 
 // hasStrongPrompt reports a shell prompt that cannot be confused with a
@@ -137,8 +156,17 @@ var (
 	pyDefRE    = regexp.MustCompile(`(?m)^\s*(def|class)\s+[a-zA-Z0-9_]+`)
 	pyImportRE = regexp.MustCompile(`(?m)^\s*(import|from)\s+[a-zA-Z0-9_.]+`)
 	pyMainRE   = regexp.MustCompile(`(?m)if\s+__name__\s*==`)
-	yamlKeyRE  = regexp.MustCompile(`(?m)^[a-zA-Z0-9_./-]+:\s`)
-	tomlSecRE  = regexp.MustCompile(`(?m)^\[[a-zA-Z0-9_."]+\]\s*$`)
+	// A `for X in Y:` loop (Python's `range`, dicts, lists...). Bash's for
+	// loops end in `; do`, never a bare colon, so the colon is decisive.
+	// `[^:\n]+` keeps the colon out of the iterable, so the trailing
+	// single-line `: print(i)` body still matches.
+	pyForInRE = regexp.MustCompile(`(?m)^\s*for\s+[A-Za-z_]\w*\s+in\s+[^:\n]+:`)
+	// A control-flow line ending in a bare colon — Python's signature. Bash
+	// uses `; then` / `; do`, so `if ...:`, `while ...:`, `try:` etc. are
+	// unambiguous.
+	pyCtrlRE  = regexp.MustCompile(`(?m)^\s*(if|elif|else|while|try|except|finally|with|def|class)\b.*:\s*(#.*)?$`)
+	yamlKeyRE = regexp.MustCompile(`(?m)^[a-zA-Z0-9_./-]+:\s`)
+	tomlSecRE = regexp.MustCompile(`(?m)^\[[a-zA-Z0-9_."]+\]\s*$`)
 )
 
 func looksLikeGo(t string) bool {
@@ -146,7 +174,8 @@ func looksLikeGo(t string) bool {
 }
 
 func looksLikePython(t string) bool {
-	return pyDefRE.MatchString(t) || pyImportRE.MatchString(t) || pyMainRE.MatchString(t)
+	return pyDefRE.MatchString(t) || pyImportRE.MatchString(t) ||
+		pyMainRE.MatchString(t) || pyForInRE.MatchString(t) || pyCtrlRE.MatchString(t)
 }
 
 func looksLikeYAML(lines []string) bool {

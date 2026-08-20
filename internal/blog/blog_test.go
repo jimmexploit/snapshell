@@ -99,13 +99,13 @@ func TestCodeFenceEscalation(t *testing.T) {
 	dir := t.TempDir()
 	text := "cat file.md\n```\nraw markdown\n```\n"
 	out := writeEntries(t, dir, Entry{Kind: KindCode, CodeText: text})
-	if !strings.Contains(out, "````text") {
+	if !strings.Contains(out, "````bash") {
 		t.Fatalf("fence should widen past embedded backticks:\n%s", out)
 	}
 	// The opening fence must be the widened 4-backtick fence, and the
 	// embedded triple-backtick lines must be preserved verbatim inside it.
 	for _, line := range strings.Split(out, "\n") {
-		if line == "```text" {
+		if line == "```bash" {
 			t.Fatalf("narrow 3-backtick fence used despite embedded backticks:\n%s", out)
 		}
 	}

@@ -30,6 +30,12 @@ func TestDetectLang(t *testing.T) {
 		{"python def", "def greet(name):\n    return f'hi {name}'\n", "python"},
 		{"python import", "import os\nprint(os.getcwd())\n", "python"},
 		{"python main guard", "if __name__ == '__main__':\n    main()\n", "python"},
+		{"python for loop", "for i in range(5):\n    print(i)\n", "python"},
+		{"python for loop one line", "for i in range(5): print(i)\n", "python"},
+		{"python while", "while True:\n    break\n", "python"},
+		{"python if colon", "if x > 5:\n    print(x)\n", "python"},
+		{"python with", "with open('file') as f:\n    data = f.read()\n", "python"},
+		{"bash for loop stays bash", "for i in 1 2 3; do\n  echo $i\ndone\n", "bash"},
 		{"yaml doc", "---\nname: box\nports:\n  - 22\n", "yaml"},
 		{"yaml kv", "host: 10.10.10.1\nuser: root\n", "yaml"},
 		{"json", "{\"name\": \"box\", \"ports\": [22, 80]}", "json"},
@@ -37,9 +43,11 @@ func TestDetectLang(t *testing.T) {
 		{"html", "<!DOCTYPE html>\n<html><body>hi</body></html>\n", "html"},
 		{"toml", "[server]\nhost = \"0.0.0.0\"\nport = 8080\n", "toml"},
 
-		// Fallbacks.
-		{"prose", "Remember to enumerate the box slowly.\nCheck every service.\n", "text"},
-		{"plain command no prompt", "nmap -sV 10.10.10.1\n", "text"},
+		// Fallbacks: anything unrecognized is a shell command at heart, so
+		// it lands in a bash fence — which is what makes every markdown
+		// viewer syntax-color the block.
+		{"plain command no prompt", "nmap -sV 10.10.10.1\n", "bash"},
+		{"prose", "Remember to enumerate the box slowly.\nCheck every service.\n", "bash"},
 	}
 
 	for _, tc := range cases {

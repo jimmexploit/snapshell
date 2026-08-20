@@ -110,7 +110,7 @@ func TestApplyCodeCancelledStillAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "blog.md"))
-	if !strings.Contains(string(data), "```text") || strings.Contains(string(data), "**") {
+	if !strings.Contains(string(data), "```bash") || strings.Contains(string(data), "**") {
 		t.Fatalf("cancelled code capture should append without a caption:\n%s", data)
 	}
 }
