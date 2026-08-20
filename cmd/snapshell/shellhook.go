@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"snapshell/internal/daemon"
 	"snapshell/internal/shellhook"
 )
 
@@ -52,6 +54,7 @@ func newHookRecordCmd() *cobra.Command {
 	var source string
 	var kittyWindow string
 	var kittyListen string
+	var exitCode int
 
 	cmd := &cobra.Command{
 		Use:    "_hook-record",
@@ -62,6 +65,24 @@ func newHookRecordCmd() *cobra.Command {
 			// Silent on failure: this runs on every command and must not
 			// spam the terminal.
 			_ = shellhook.RecordCommand(source, kittyWindow, kittyListen, text)
+			// Auto mode: when the command succeeded and a session is
+			// active, whisper the completion to the daemon so it can queue
+			// the command as a pending card. Best-effort and silent — the
+			// daemon is the decision-maker (auto mode on, inventory
+			// session, command not excluded); a missing/unreachable daemon
+			// just means nothing gets queued.
+			if exitCode == 0 && shellhook.ActiveSessionActive() {
+				_, _ = sendRequest(daemon.Request{
+					Cmd: daemon.CmdAutoCapture,
+					Args: map[string]string{
+						"text":         text,
+						"exit":         strconv.Itoa(exitCode),
+						"source":       source,
+						"kitty-window": kittyWindow,
+						"kitty-listen": kittyListen,
+					},
+				})
+			}
 			return nil
 		},
 	}
@@ -69,6 +90,7 @@ func newHookRecordCmd() *cobra.Command {
 	cmd.Flags().StringVar(&source, "source", "", "where the command ran (tmux pane id, or tty device); shown in the session history")
 	cmd.Flags().StringVar(&kittyWindow, "kitty-window", "", "the kitty window id (KITTY_WINDOW_ID) the command ran in, when it ran in a plain kitty tab; enables output capture")
 	cmd.Flags().StringVar(&kittyListen, "kitty-listen", "", "the kitty listen socket (KITTY_LISTEN_ON) for that window")
+	cmd.Flags().IntVar(&exitCode, "exit-code", -1, "the executed command's exit status; -1 when unknown (pre-auto-mode hooks)")
 
 	return cmd
 }

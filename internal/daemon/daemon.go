@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"snapshell/internal/blog"
 	"snapshell/internal/capture/screenshot"
@@ -180,12 +181,14 @@ func (d *Daemon) start(disableHotkeys bool) error {
 		return fmt.Errorf("create markers dir: %w", err)
 	}
 
-	// PID file: refuse to double-start against a live process.
+	d.logger = openLog(d.logPath)
+
+	// PID file: refuse to double-start against a live process. The socket is
+	// the authority (a recycled PID alone proves nothing).
 	if err := d.acquirePid(); err != nil {
 		return err
 	}
 
-	d.logger = openLog(d.logPath)
 	d.logger.Printf("daemon starting, pid=%d", os.Getpid())
 
 	// Socket: remove a stale socket before listening.
@@ -317,13 +320,33 @@ func openLog(path string) *log.Logger {
 func (d *Daemon) acquirePid() error {
 	if data, err := os.ReadFile(d.pidPath); err == nil {
 		pid, perr := strconv.Atoi(strings.TrimSpace(string(data)))
-		if perr == nil && pid > 0 && processAlive(pid) {
+		if perr == nil && pid > 0 && processAlive(pid) && d.socketListening() {
 			return fmt.Errorf("daemon already running (pid=%d), refusing to start a second instance", pid)
 		}
-		// Stale PID: clean it (and any stale socket) below.
+		// Stale PID: the PID is dead, or it was recycled by an unrelated
+		// process while no daemon is listening on the socket. Clean it
+		// (and any stale socket) below.
+		if pid > 0 && processAlive(pid) {
+			d.logger.Printf("pid %d is alive but no daemon is listening on %s — treating it as stale (recycled PID)", pid, d.sockPath)
+		}
 		_ = os.Remove(d.pidPath)
 	}
 	return os.WriteFile(d.pidPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600)
+}
+
+// socketListening reports whether a live listener is accepting connections
+// on the daemon socket. The socket is the authority on whether a daemon is
+// actually running: a PID file alone can be fooled by a recycled PID.
+func (d *Daemon) socketListening() bool {
+	if _, err := os.Stat(d.sockPath); os.IsNotExist(err) {
+		return false
+	}
+	conn, err := net.Dial("unix", d.sockPath)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func processAlive(pid int) bool {
@@ -409,6 +432,8 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		d.writeResponse(conn, d.handleDiscard(req))
 	case CmdNote:
 		d.writeResponse(conn, d.handleNote(req))
+	case CmdAutoCapture:
+		d.writeResponse(conn, d.handleAutoCapture(req))
 	default:
 		d.writeResponse(conn, fail(fmt.Sprintf("unknown command %q", req.Cmd)))
 	}
@@ -655,6 +680,98 @@ func (d *Daemon) handleNote(req Request) Response {
 	}
 	d.logger.Printf("inventory: appended standalone note")
 	return ok("note added")
+}
+
+// handleAutoCapture decides whether a completed command becomes a pending
+// code card. The shell hook sends one of these after every command that
+// exited 0 while a session is active; this handler is the single
+// decision-maker and single writer for the auto path: auto mode must be
+// enabled in the config, the session must be an inventory session, and the
+// command must not be on the [auto].exclude list. Everything else returns
+// ok without touching the queue — an ignored autocapture is not an error,
+// and the hook must never see a failure it can't act on.
+//
+// The card text is built the way Alt+2 would: for a tmux pane the full
+// prompt+command+output (including scrolled content) is captured from the
+// session's marker record; for a plain terminal the recorded command text
+// is used, plus the output read back from the kitty window when the command
+// ran in one. A capture failure falls back to the recorded command text, so
+// auto mode degrades to a command-only card rather than losing the command.
+func (d *Daemon) handleAutoCapture(req Request) Response {
+	text := req.Args["text"]
+	exit := strings.TrimSpace(req.Args["exit"])
+	source := req.Args["source"]
+	kittyWindow := req.Args["kitty-window"]
+	kittyListen := req.Args["kitty-listen"]
+
+	if exit != "0" {
+		return ok("autocapture ignored: command did not exit 0")
+	}
+	if strings.TrimSpace(text) == "" {
+		return ok("autocapture ignored: empty command")
+	}
+
+	cfg := d.cfg.Load()
+	if !cfg.AutoCaptureEnabled() {
+		return ok("autocapture ignored: auto mode disabled")
+	}
+	if cfg.AutoCaptureExcluded(text) {
+		d.logger.Printf("autocapture: %q excluded by [auto].exclude", firstLineOf(text))
+		return ok("autocapture ignored: command excluded")
+	}
+
+	// Snapshot the session pointer under the lock; the tmux/kitty capture
+	// below is a subprocess and must never run while holding d.mu.
+	d.mu.Lock()
+	s := d.session
+	d.mu.Unlock()
+	if s == nil {
+		return ok("autocapture ignored: no active session")
+	}
+	if s.Mode != ModeInventory || s.Queue == nil {
+		return ok("autocapture ignored: session is not in inventory mode")
+	}
+
+	capture := text
+	switch {
+	case strings.HasPrefix(source, "%"):
+		// tmux pane: the _hook-mark end phase wrote this command's row
+		// record to the session log just before _hook-record ran, so the
+		// last record is this command. Capture the full prompt+output.
+		res, err := tmuxcap.CaptureN(d.sessionLogPath(s.Name), cfg.OutputIncluded(), 1)
+		if err != nil {
+			d.logger.Printf("autocapture: tmux capture for %s: %v (using command text)", s.Name, err)
+		} else if strings.TrimSpace(res.Text) != "" {
+			capture = res.Text
+		}
+	case kittyWindow != "":
+		// Plain kitty terminal: append the command's output read back from
+		// the window, like Alt+2 does. Best-effort — a dead window keeps
+		// just the command text.
+		if out, err := tmuxcap.KittyOutput(kittyWindow, kittyListen); err == nil {
+			if out = strings.TrimRight(out, "\n"); out != "" {
+				capture = text + "\n" + out
+			}
+		}
+	}
+
+	if err := s.Queue.AppendCode(capture); err != nil {
+		d.logger.Printf("autocapture: enqueue: %v", err)
+		return fail(fmt.Sprintf("queue command: %v", err))
+	}
+	d.logger.Printf("autocapture: queued %q (%d pending)", firstLineOf(text), s.Queue.Len())
+	return ok(fmt.Sprintf("queued command (%d pending)", s.Queue.Len()))
+}
+
+// firstLineOf returns the first non-empty line of s for log messages
+// (commands can be multi-line; one line keeps the log readable).
+func firstLineOf(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // activeQueueLocked returns the active session's inventory queue, or the
@@ -1115,7 +1232,19 @@ func (d *Daemon) handleSignals() {
 
 func (d *Daemon) cleanup() {
 	if d.unregHook != nil {
-		d.unregHook()
+		// The X event loop goroutine must not be able to hold the daemon
+		// hostage: if unregister never completes (blocked X event loop),
+		// the process must still exit so the PID/socket are released.
+		done := make(chan struct{})
+		go func() {
+			d.unregHook()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			d.logger.Printf("hotkey unregister timed out after 2s — continuing shutdown without it")
+		}
 	}
 	if d.listener != nil {
 		_ = d.listener.Close()

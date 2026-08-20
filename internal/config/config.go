@@ -27,11 +27,27 @@ type Config struct {
 	Themes     ThemesConfig     `toml:"themes"`
 	Blog       BlogConfig       `toml:"blog"`
 	Image      ImageConfig      `toml:"image"`
+	Auto       AutoConfig       `toml:"auto"`
 	// Inventory is the legacy name for the image settings table: old config
 	// files used [inventory] for these keys. Read for backward compatibility
 	// and merged into Image wherever [image] leaves a key unset. Never
 	// written out — the default file uses [image].
 	Inventory ImageConfig `toml:"inventory"`
+}
+
+// AutoConfig configures auto mode: while an inventory session is active,
+// every command that exits 0 is queued as a pending code card automatically,
+// so the successful commands are waiting in the review TUI without pressing
+// Alt+2. Excluded commands (e.g. "ls") are skipped by the auto path but can
+// still be captured manually with Alt+2.
+type AutoConfig struct {
+	// Enabled turns auto capture on. Default false — Alt+2 stays the only
+	// way commands land in the queue.
+	Enabled bool `toml:"enabled"`
+	// Exclude lists commands that the auto path skips even when they exit 0.
+	// Each entry matches either the full command line or its first word
+	// (e.g. "ls" also skips "ls -la"). Matches are case-sensitive.
+	Exclude []string `toml:"exclude"`
 }
 
 // ScreenshotConfig configures the Alt+1 capture tool.
@@ -338,6 +354,11 @@ func SplitKeyList(s string) []string {
 	return out
 }
 
+// DefaultAutoExclude are the commands skipped by auto mode out of the box.
+// They are high-frequency or read-only and would drown the queue with
+// noise; every one of them can still be captured manually with Alt+2.
+var DefaultAutoExclude = []string{"ls", "cd", "clear", "pwd", "exit", "echo"}
+
 // Default returns the built-in configuration values. SessionRoot is the
 // per-user location sessions land in (a leading "~/" is expanded by Load).
 func Default() *Config {
@@ -353,6 +374,7 @@ func Default() *Config {
 		Themes:     ThemesConfig{},
 		Blog:       BlogConfig{CaptionPosition: "above"},
 		Image:      ImageConfig{CloseDelaySecs: DefaultImageCloseDelay, ImageMode: "kitty", ImageRender: "tab"},
+		Auto:       AutoConfig{Enabled: false, Exclude: append([]string(nil), DefaultAutoExclude...)},
 	}
 }
 
@@ -508,6 +530,37 @@ func (c *Config) BlogImagePadding() int {
 		return 100
 	}
 	return v
+}
+
+// AutoCaptureEnabled reports whether auto mode is on (default false).
+func (c *Config) AutoCaptureEnabled() bool {
+	return c.Auto.Enabled
+}
+
+// AutoCaptureExcluded reports whether a recorded command line should be
+// skipped by the auto path. A command is excluded when it matches an
+// [auto].exclude entry either by its full trimmed text or by its first
+// whitespace-separated word ("ls -la" matches an "ls" entry). Matching is
+// case-sensitive.
+func (c *Config) AutoCaptureExcluded(command string) bool {
+	full := strings.TrimSpace(command)
+	if full == "" {
+		return true
+	}
+	word := full
+	if i := strings.IndexAny(word, " \t"); i >= 0 {
+		word = word[:i]
+	}
+	for _, e := range c.Auto.Exclude {
+		ex := strings.TrimSpace(e)
+		if ex == "" {
+			continue
+		}
+		if full == ex || word == ex {
+			return true
+		}
+	}
+	return false
 }
 
 // ThemeSearchDirs returns the directories to scan for installed GTK themes:
@@ -676,6 +729,7 @@ const defaultFileText = `# snapshell configuration
 #   [capture]           how commands are captured (Alt+2)
 #   [keymaps]           all hotkeys — global + review-TUI keys
 #   [image]             how screenshots look in the review TUI and blog render
+#   [auto]              auto-capture successful commands while in inventory mode
 #   [blog]              how entries are written to blog.md
 #   [paths]             where sessions are stored
 #   [themes]            GTK theme for the popup
@@ -790,6 +844,20 @@ const defaultFileText = `# snapshell configuration
   # the image/code block: "above" (default) or "below". Note entries have
   # no caption and ignore this.
   caption_position = "above"
+
+[auto]
+  # Auto mode: while an inventory session is active, every command that
+  # exits 0 is queued as a pending code card automatically — no Alt+2
+  # needed. The successful commands are waiting for you in the review TUI
+  # ('snapshell inventory'), captions optional, when you're ready to write
+  # them up. Command output is captured the same way Alt+2 would (from the
+  # tmux pane, or the kitty scrollback when you're not in tmux), so long/
+  # scrolled output comes along too.
+  enabled = false
+  # Commands that the auto path skips even when they exit 0. Each entry
+  # matches either the full command line or its first word ("ls" also skips
+  # "ls -la"). Excluded commands can still be captured manually with Alt+2.
+  exclude = ["ls", "cd", "clear", "pwd", "exit", "echo"]
 
 [paths]
   # Where session folders (and their blog.md + attachments/) are stored.

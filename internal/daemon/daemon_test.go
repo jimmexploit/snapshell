@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -204,6 +205,53 @@ func TestStalePidIsCleared(t *testing.T) {
 
 	send(t, sockPath, Request{Cmd: CmdDaemonStop})
 	<-done
+}
+
+func TestRecycledPidWithDeadSocketIsCleared(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	sessionRoot := t.TempDir()
+	os.MkdirAll(stateDir, 0o700)
+
+	// A stale PID pointing at a *live* process that is NOT our daemon (a
+	// recycled PID): os.Getpid() is alive but nothing listens on the socket.
+	// The socket is the authority — the daemon must start anyway, not refuse
+	// on a live-looking PID.
+	if err := os.WriteFile(filepath.Join(stateDir, "daemon.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	done, sockPath := startTestDaemon(t, stateDir, sessionRoot)
+
+	resp := send(t, sockPath, Request{Cmd: CmdStatus})
+	if !resp.OK {
+		t.Fatalf("daemon should start despite a recycled (live) pid with a dead socket, got %+v", resp)
+	}
+
+	send(t, sockPath, Request{Cmd: CmdDaemonStop})
+	<-done
+}
+
+func TestCleanupNotBlockedByHungHotkeyUnregister(t *testing.T) {
+	stateDir := t.TempDir()
+	d := &Daemon{
+		logger: log.New(io.Discard, "", 0),
+		// A hotkey unregister that never completes (blocked X event loop)
+		// must not keep the daemon alive: shutdown has to complete anyway.
+		unregHook:         func() { select {} },
+		pidPath:           filepath.Join(stateDir, "daemon.pid"),
+		sockPath:          filepath.Join(stateDir, "daemon.sock"),
+		activeSessionPath: filepath.Join(stateDir, "activesession"),
+	}
+	os.WriteFile(d.pidPath, []byte("999\n"), 0o600)
+
+	start := time.Now()
+	d.cleanup()
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("cleanup took %v with a hung unregister, want <= ~2s", elapsed)
+	}
+	if _, err := os.Stat(d.pidPath); !os.IsNotExist(err) {
+		t.Fatalf("pid file not removed despite hung unregister")
+	}
 }
 
 func TestMalformedRequest(t *testing.T) {

@@ -22,8 +22,10 @@ if command -v snapshell >/dev/null 2>&1; then
   if [ -n "$TMUX" ]; then
     # Inside tmux: record row markers for full prompt+output capture, and
     # the command text (at end, once it completed) for the session history.
+    # $1 is the exit status passed by _snapshell_precmd_end (captured
+    # before anything could clobber it), used for auto mode.
     _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
-    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; snapshell _hook-record --source "$TMUX_PANE" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT; }
+    _snapshell_mark_end()   { local _SNAPSHELL_EXIT="${1:-0}"; _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; snapshell _hook-record --source "$TMUX_PANE" --exit-code "$_SNAPSHELL_EXIT" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT; }
   else
     # No tmux: plain terminal. Inside kitty, enable kitty's shell
     # integration (prompt marks) so Alt+2 can read the command's output
@@ -34,7 +36,7 @@ if command -v snapshell >/dev/null 2>&1; then
       source /usr/lib/kitty/shell-integration/bash/kitty.bash
     fi
     _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; _SNAPSHELL_KITTY_WID="${KITTY_WINDOW_ID:-}"; _SNAPSHELL_KITTY_LISTEN="${KITTY_LISTEN_ON:-}"; }
-    _snapshell_mark_end()   { snapshell _hook-record --source "$(tty 2>/dev/null)" --kitty-window "${_SNAPSHELL_KITTY_WID:-}" --kitty-listen "${_SNAPSHELL_KITTY_LISTEN:-}" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT _SNAPSHELL_KITTY_WID _SNAPSHELL_KITTY_LISTEN; }
+    _snapshell_mark_end()   { local _SNAPSHELL_EXIT="${1:-0}"; snapshell _hook-record --source "$(tty 2>/dev/null)" --kitty-window "${_SNAPSHELL_KITTY_WID:-}" --kitty-listen "${_SNAPSHELL_KITTY_LISTEN:-}" --exit-code "$_SNAPSHELL_EXIT" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT _SNAPSHELL_KITTY_WID _SNAPSHELL_KITTY_LISTEN; }
   fi
 
   _snapshell_preexec() {
@@ -50,8 +52,14 @@ if command -v snapshell >/dev/null 2>&1; then
   }
 
   _snapshell_precmd_end() {
+    # Capture the command's exit status before anything else can change it
+    # (the guard below would reset it). Under bash-preexec the reliable
+    # value is __bp_last_ret_status, which it snapshots before invoking the
+    # precmd hooks; standalone, $? still holds the user command's status.
+    local _SNAPSHELL_EXIT=$?
     [ -n "${_SNAPSHELL_STARTED:-}" ] || return 0
-    _snapshell_mark_end
+    [ -z "${__bp_last_ret_status:-}" ] || _SNAPSHELL_EXIT="${__bp_last_ret_status}"
+    _snapshell_mark_end "$_SNAPSHELL_EXIT"
     unset _SNAPSHELL_STARTED
   }
 
@@ -104,15 +112,18 @@ const ZshSnippet = `# --- snapshell shell integration ---
 if (( $+commands[snapshell] )); then
   autoload -Uz add-zsh-hook
   if [ -n "$TMUX" ]; then
+    # $? is captured first thing in _snapshell_mark_end (zsh preserves the
+    # last command's exit status into the precmd hook, and add-zsh-hook
+    # runs this function first in the chain) — it drives auto mode.
     _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; snapshell _hook-mark --pane "$TMUX_PANE" --phase start --prev-end "${_SNAPSHELL_PREV_END:-}"; }
-    _snapshell_mark_end()   { _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; snapshell _hook-record --source "$TMUX_PANE" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT; }
+    _snapshell_mark_end()   { local _SNAPSHELL_EXIT=$?; _SNAPSHELL_PREV_END="$(snapshell _hook-mark --pane "$TMUX_PANE" --phase end)"; snapshell _hook-record --source "$TMUX_PANE" --exit-code "$_SNAPSHELL_EXIT" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT; }
   else
     if [ -n "$KITTY_WINDOW_ID" ] && [ -z "$KITTY_SHELL_INTEGRATION" ] && [ -r /usr/lib/kitty/shell-integration/zsh/kitty.zsh ]; then
       export KITTY_SHELL_INTEGRATION=enabled
       source /usr/lib/kitty/shell-integration/zsh/kitty.zsh
     fi
     _snapshell_mark_start() { _SNAPSHELL_TEXT="$1"; _SNAPSHELL_KITTY_WID="${KITTY_WINDOW_ID:-}"; _SNAPSHELL_KITTY_LISTEN="${KITTY_LISTEN_ON:-}"; }
-    _snapshell_mark_end()   { snapshell _hook-record --source "$(tty 2>/dev/null)" --kitty-window "${_SNAPSHELL_KITTY_WID:-}" --kitty-listen "${_SNAPSHELL_KITTY_LISTEN:-}" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT _SNAPSHELL_KITTY_WID _SNAPSHELL_KITTY_LISTEN; }
+    _snapshell_mark_end()   { local _SNAPSHELL_EXIT=$?; snapshell _hook-record --source "$(tty 2>/dev/null)" --kitty-window "${_SNAPSHELL_KITTY_WID:-}" --kitty-listen "${_SNAPSHELL_KITTY_LISTEN:-}" --exit-code "$_SNAPSHELL_EXIT" --text "${_SNAPSHELL_TEXT:-}"; unset _SNAPSHELL_TEXT _SNAPSHELL_KITTY_WID _SNAPSHELL_KITTY_LISTEN; }
   fi
   add-zsh-hook preexec _snapshell_mark_start
   add-zsh-hook precmd  _snapshell_mark_end

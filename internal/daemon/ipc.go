@@ -38,6 +38,14 @@ const (
 	CmdCommit  = "commit"  // commit a card (args: id, caption)
 	CmdDiscard = "discard" // permanently discard a card (args: id, confirm)
 	CmdNote    = "note"    // append a standalone note (args: text)
+
+	// CmdAutoCapture queues a successful command as a pending card in an
+	// inventory session when [auto].enabled is set and the command is not
+	// excluded. Sent by the shell hook (_hook-record) after every command
+	// that exited 0 while a session is active; the daemon decides whether
+	// auto mode applies. Args: text, exit, source, kitty-window,
+	// kitty-listen.
+	CmdAutoCapture = "autocapture"
 )
 
 // StatusData is the structured payload behind the status verb.

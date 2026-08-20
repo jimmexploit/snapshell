@@ -508,7 +508,7 @@ func TestDefaultFileTextHasNewPopupKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "[image]", "image_viewer = \"\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2", "[keymaps.inventory]", "quit       = \"q, ctrl+c\"", "up         = \"up, k\"", "down       = \"down, j\"", "page_up    = \"pgup\"", "append     = \"a\"", "caption    = \"c\"", "discard    = \"d\"", "note       = \"n\"", "blog       = \"v\"", "open       = \"enter\"", "submit     = \"ctrl+s\"", "cancel     = \"esc\"", "confirm    = \"y, Y\"", "decline    = \"n, N\""} {
+	for _, want := range []string{"keep_ratio = true", "position = \"\"", "bottom-right", "reload_on_hotkey = false", "reload     = \"Alt+5\"", "[themes]", "name = \"\"", "root = \"\"", "[blog]", "caption_position = \"above\"", "[image]", "image_viewer = \"\"", "image_render = \"tab\"", "image_scale_percent = 60", "blog_image_scale_percent = 100", "blog_image_align = \"left\"", "blog_image_padding = 2", "[auto]", "enabled = false", "exclude = [\"ls\", \"cd\", \"clear\", \"pwd\", \"exit\", \"echo\"]", "[keymaps.inventory]", "quit       = \"q, ctrl+c\"", "up         = \"up, k\"", "down       = \"down, j\"", "page_up    = \"pgup\"", "append     = \"a\"", "caption    = \"c\"", "discard    = \"d\"", "note       = \"n\"", "blog       = \"v\"", "open       = \"enter\"", "submit     = \"ctrl+s\"", "cancel     = \"esc\"", "confirm    = \"y, Y\"", "decline    = \"n, N\""} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("default file missing %q:\n%s", want, data)
 		}
@@ -748,5 +748,111 @@ func TestLegacyInventoryTableMerges(t *testing.T) {
 	cfg = load("[inventory]\nimage_viewer = \"feh\"\nclose_delay_secs = 9\n")
 	if cfg.Image.ImageViewer != "feh" || cfg.CloseDelay() != 9*time.Second {
 		t.Fatalf("legacy viewer/close delay: viewer=%q delay=%v", cfg.Image.ImageViewer, cfg.CloseDelay())
+	}
+}
+
+func TestAutoDefaultsOffWithDefaultExcludes(t *testing.T) {
+	cfg := Default()
+	if cfg.AutoCaptureEnabled() {
+		t.Fatal("auto mode should default to off")
+	}
+	if len(cfg.Auto.Exclude) != len(DefaultAutoExclude) {
+		t.Fatalf("default excludes = %v, want %v", cfg.Auto.Exclude, DefaultAutoExclude)
+	}
+	// Defaults keep working when the config file is missing (LoadFrom writes
+	// it then returns the defaults).
+	path := filepath.Join(t.TempDir(), "config.toml")
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if loaded.AutoCaptureEnabled() {
+		t.Fatal("auto mode should default to off in a fresh config")
+	}
+	if !reflect.DeepEqual(loaded.Auto.Exclude, DefaultAutoExclude) {
+		t.Fatalf("fresh-config excludes = %v, want %v", loaded.Auto.Exclude, DefaultAutoExclude)
+	}
+}
+
+func TestAutoCaptureEnabledFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[auto]\nenabled = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if !cfg.AutoCaptureEnabled() {
+		t.Fatal("explicit enabled = true must be honored")
+	}
+	// A partial [auto] table keeps the default exclude list.
+	if !reflect.DeepEqual(cfg.Auto.Exclude, DefaultAutoExclude) {
+		t.Fatalf("excludes = %v, want defaults", cfg.Auto.Exclude)
+	}
+}
+
+func TestAutoEmptyExcludeListPreserved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[auto]\nenabled = true\nexclude = []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if len(cfg.Auto.Exclude) != 0 {
+		t.Fatalf("explicit empty exclude list must be preserved, got %v", cfg.Auto.Exclude)
+	}
+	if cfg.AutoCaptureExcluded("ls") {
+		t.Fatal("with an empty exclude list nothing should be excluded")
+	}
+}
+
+func TestAutoCaptureExcluded(t *testing.T) {
+	cfg := Default()
+	cases := []struct {
+		command string
+		want    bool
+	}{
+		{"", true},
+		{"   ", true},
+		{"ls", true},
+		{"ls -la /tmp", true},
+		{"pwd", true},
+		{"clear", true},
+		{"echo hello", true},
+		{"cd /etc", true},
+		{"nmap -sV 10.10.10.1", false},
+		{"whoami", false},
+		{"LS", false},      // case-sensitive: LS != ls
+		{"lsal", false},    // word match, not substring
+		{"nmap ls", false}, // first word wins; trailing ls doesn't exclude
+	}
+	for _, tc := range cases {
+		if got := cfg.AutoCaptureExcluded(tc.command); got != tc.want {
+			t.Errorf("AutoCaptureExcluded(%q) = %v, want %v", tc.command, got, tc.want)
+		}
+	}
+}
+
+func TestAutoCustomExcludes(t *testing.T) {
+	// Custom excludes replace the defaults entirely.
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[auto]\nexclude = [\"nmap\", \"curl -s\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if !cfg.AutoCaptureExcluded("nmap -sV 10.10.10.1") {
+		t.Fatal("custom 'nmap' exclude should match by first word")
+	}
+	if !cfg.AutoCaptureExcluded("curl -s") {
+		t.Fatal("custom full-line exclude should match")
+	}
+	if cfg.AutoCaptureExcluded("ls") {
+		t.Fatal("custom excludes replace the defaults; 'ls' must not be excluded")
 	}
 }

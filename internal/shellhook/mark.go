@@ -143,6 +143,15 @@ func activeSessionDir() string {
 	return ""
 }
 
+// ActiveSessionActive reports whether a session is currently active (the
+// daemon's active-session pointer exists and points at a session log). The
+// shell hook uses it to skip pointless auto-capture IPC when no session is
+// running; the daemon makes the real decision (auto mode on, inventory
+// session, command not excluded).
+func ActiveSessionActive() bool {
+	return activeSessionLog() != ""
+}
+
 // appendCommandTranscript appends one completed command's readable record to
 // the active session's commands.logs: a timestamp+source header line, then
 // the captured text (prompt + command + output for tmux, command text + read

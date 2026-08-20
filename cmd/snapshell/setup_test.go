@@ -155,8 +155,8 @@ func TestInstallHookAppendsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .bashrc: %v", err)
 	}
-	if !strings.Contains(string(data), "_hook-mark") || !strings.Contains(string(data), "_hook-record") {
-		t.Fatalf(".bashrc missing hook helpers:\n%s", data)
+	if !strings.Contains(string(data), "_hook-mark") || !strings.Contains(string(data), "_hook-record") || !strings.Contains(string(data), "--exit-code") {
+		t.Fatalf(".bashrc missing hook helpers (exit-code feeds auto mode):\n%s", data)
 	}
 }
 

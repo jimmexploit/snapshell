@@ -473,3 +473,27 @@ func TestRecordCommandNoSessionOnlyLastCommand(t *testing.T) {
 		t.Fatalf("lastcommand = %q (err=%v), want the command text", data, err)
 	}
 }
+
+func TestActiveSessionActive(t *testing.T) {
+	setUp(t, "0 5")
+
+	if ActiveSessionActive() {
+		t.Fatal("no pointer file yet — should report inactive")
+	}
+
+	// A pointer file pointing at a session log means an active session.
+	if err := os.WriteFile(activeSessionPath(), []byte("/tmp/snapshell/logs/acme/markers.logs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !ActiveSessionActive() {
+		t.Fatal("pointer file present — should report active")
+	}
+
+	// An empty pointer (daemon just stopped, file removed) is inactive.
+	if err := os.WriteFile(activeSessionPath(), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ActiveSessionActive() {
+		t.Fatal("empty pointer file should report inactive")
+	}
+}
