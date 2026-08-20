@@ -209,6 +209,29 @@ inventory` any time to review them in a full-screen terminal UI:
   screenshots included — in kitty they render inline via the kitty graphics
   protocol, with configurable size, alignment, and edge padding.
 
+Captured code blocks are syntax-colored — in the queue preview, in the
+live blog view, and in `blog.md` itself (the code fence carries the detected
+language, so any Markdown viewer colors it too).
+
+### Auto mode (`[auto]`)
+
+Turn on `[auto].enabled` and every command that exits 0 is queued as a
+pending code card automatically while you work — no Alt+2 needed. The
+successful commands are waiting in the review TUI when you sit down to
+write up the session.
+
+- Command output is captured the same way Alt+2 would: from the tmux pane
+  (full output, including scrolled content), or from the kitty scrollback
+  when you're not in tmux. A failed output capture degrades to a
+  command-only card rather than losing the command.
+- `[auto].exclude` lists commands the auto path skips even when they exit 0
+  (defaults: `ls`, `cd`, `clear`, `pwd`, `exit`, `echo`). Each entry matches
+  the full command line or its first word — `ls` also skips `ls -la`.
+  Excluded commands can still be captured manually with Alt+2.
+- Auto mode only queues commands while the **active** session is in
+  inventory mode; nothing is queued in normal-mode sessions, and ignored
+  commands (excluded, failed, auto off) never fire a notification.
+
 Every key in the TUI is redefinable under `[keymaps.inventory]` in the
 config file.
 
@@ -247,6 +270,7 @@ documented inline. Sections group related settings together:
 [keymaps]      all hotkeys — global + review-TUI keys
 [keymaps.inventory]  keys of the review TUI
 [image]        how screenshots look in the review TUI and blog render
+[auto]         auto-capture successful commands while in inventory mode
 [blog]         how entries are written to blog.md
 [paths]        where sessions are stored
 [themes]       GTK theme for the popup
@@ -258,6 +282,9 @@ Highlights (see the file itself for the full annotated list):
   (`image_viewer`), the in-terminal mode (`image_mode` = kitty/external), the
   preview style (`image_render` = tab/inline), and the blog-render layout
   (`blog_image_scale_percent`, `blog_image_align`, `blog_image_padding`).
+- `[auto]` turns on auto mode: every command that exits 0 queues itself as a
+  pending code card while an inventory session is active, with an
+  `exclude` list for commands you don't want auto-captured.
 - `[keymaps]` holds every hotkey in one place — the global Alt+1..5 combos
   and the review-TUI keys, each a comma-separated list of key names.
 - Partial files are fine — missing keys get defaults. `~` is expanded in
